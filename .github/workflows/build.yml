@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-cli
+            spec: packaging/dji-color-cli.spec
+            artifact: dji-color-cli-windows-x64
+          - os: windows-latest
+            target: windows-gui
+            spec: packaging/dji-color-gui.spec
+            artifact: dji-color-gui-windows-x64
+          - os: macos-14
+            target: macos-cli-arm64
+            spec: packaging/dji-color-cli.spec
+            artifact: dji-color-cli-macos-arm64
+          - os: macos-14
+            target: macos-gui-arm64
+            spec: packaging/dji-color-gui.spec
+            artifact: dji-color-gui-macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[gui,dev]" pyinstaller
+
+      - name: Test
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests
+
+      - name: Build artifact
+        run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
