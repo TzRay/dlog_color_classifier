@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "要发布的 tag，例如 v1.0.0。手动触发时必须已存在或由本流程创建。"
+        description: "要发布的 tag，例如 v1.0.0"
         required: true
         type: string
       prerelease:
@@ -20,25 +20,28 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    name: Build Windows executables
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+            cli_path: dist/dji-color.exe
+            gui_path: dist/dji-color-gui.exe
+            cli_zip: dji-color-cli-windows-x64.zip
+            gui_zip: dji-color-gui-windows-x64.zip
+          - os: macos-14
+            platform: macos-arm64
+            cli_path: dist/dji-color
+            gui_path: dist/dji-color-gui
+            cli_zip: dji-color-cli-macos-arm64.zip
+            gui_zip: dji-color-gui-macos-arm64.zip
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve release tag
-        id: release_tag
-        shell: pwsh
-        run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag_name }}"
-          } else {
-            $tag = "${{ github.ref_name }}"
-          }
-          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - uses: actions/setup-python@v5
         with:
@@ -53,17 +56,19 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q tests
 
-      - name: Build CLI exe
+      - name: Build CLI
         run: pyinstaller --clean --noconfirm packaging/dji-color-cli.spec
 
-      - name: Build GUI exe
+      - name: Build GUI
         run: pyinstaller --clean --noconfirm packaging/dji-color-gui.spec
 
-      - name: Smoke test CLI exe
+      - name: Smoke test CLI on Windows
+        if: runner.os == 'Windows'
         shell: pwsh
         run: .\dist\dji-color.exe version
 
-      - name: Smoke test GUI exe
+      - name: Smoke test GUI on Windows
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
@@ -73,21 +78,67 @@ jobs:
             throw "GUI smoke test failed with exit code $($process.ExitCode)"
           }
 
-      - name: Package release assets
+      - name: Smoke test executables on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          chmod +x "${{ matrix.cli_path }}" "${{ matrix.gui_path }}"
+          "./${{ matrix.cli_path }}" version
+          "./${{ matrix.gui_path }}" --smoke
+
+      - name: Package Windows assets
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Compress-Archive -Path .\dist\dji-color.exe -DestinationPath .\release\dji-color-cli-windows-x64.zip -Force
-          Compress-Archive -Path .\dist\dji-color-gui.exe -DestinationPath .\release\dji-color-gui-windows-x64.zip -Force
-          Get-FileHash .\release\*.zip -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
-            Set-Content -Path .\release\SHA256SUMS.txt -Encoding UTF8
+          Compress-Archive -Path "${{ matrix.cli_path }}" -DestinationPath "release/${{ matrix.cli_zip }}" -Force
+          Compress-Archive -Path "${{ matrix.gui_path }}" -DestinationPath "release/${{ matrix.gui_zip }}" -Force
 
-      - name: Upload workflow artifacts
+      - name: Package macOS assets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p release
+          zip -j "release/${{ matrix.cli_zip }}" "${{ matrix.cli_path }}"
+          zip -j "release/${{ matrix.gui_zip }}" "${{ matrix.gui_path }}"
+
+      - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-executables
-          path: release/
+          name: release-${{ matrix.platform }}
+          path: release/*.zip
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release_tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag_name }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          cd release
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -101,4 +152,6 @@ jobs:
           files: |
             release/dji-color-cli-windows-x64.zip
             release/dji-color-gui-windows-x64.zip
+            release/dji-color-cli-macos-arm64.zip
+            release/dji-color-gui-macos-arm64.zip
             release/SHA256SUMS.txt
