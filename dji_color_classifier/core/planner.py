@@ -109,7 +109,7 @@ def _prefix_target(result: ScanResult, name_template: str | None) -> Path | None
         return None
 
     if name_template:
-        name = _render_template(name_template, result)
+        name = _render_name_template(name_template, result)
     else:
         prefix = DEFAULT_PREFIXES.get(result.mode)
         if prefix is None:
@@ -121,7 +121,7 @@ def _prefix_target(result: ScanResult, name_template: str | None) -> Path | None
 def _directory_target(result: ScanResult, *, root: Path, dir_template: str | None) -> Path:
     """生成移动或复制到分类目录的目标。"""
 
-    directory_name = _render_template(dir_template, result) if dir_template else DEFAULT_DIRS.get(result.mode, "unknown")
+    directory_name = _render_directory_template(dir_template, result) if dir_template else DEFAULT_DIRS.get(result.mode, "unknown")
     return root / directory_name / result.path.name
 
 
@@ -136,6 +136,29 @@ def _render_template(template: str, result: ScanResult) -> str:
         mode=result.mode.value,
         mode_label=result.mode.label,
     )
+
+
+def _render_name_template(template: str, result: ScanResult) -> str:
+    """渲染并校验文件名模板，禁止生成路径或空文件名。"""
+
+    name = _render_template(template, result).strip()
+    if not name:
+        raise ValueError("文件名模板不能生成空文件名")
+    if Path(name).name != name or "/" in name or "\\" in name:
+        raise ValueError("文件名模板只能生成文件名，不能包含目录")
+    return name
+
+
+def _render_directory_template(template: str, result: ScanResult) -> Path:
+    """渲染并校验目录模板，禁止绝对路径和向上跳转。"""
+
+    value = _render_template(template, result).strip()
+    directory = Path(value)
+    if not value:
+        raise ValueError("目录模板不能生成空目录")
+    if directory.is_absolute() or any(part == ".." for part in directory.parts):
+        raise ValueError("目录模板必须是当前视频目录下的相对路径")
+    return directory
 
 
 def _append_suffix_until_free(path: Path, planned_targets: set[Path]) -> Path:

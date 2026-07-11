@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dji_color_classifier.core.models import ClassificationEvidence, ColorMode, PlanAction, ScanResult
 from dji_color_classifier.core.planner import build_plan
 
@@ -38,3 +40,23 @@ def test_move_uses_mode_directories(tmp_path: Path) -> None:
 
     assert plan[0].action is PlanAction.MOVE
     assert plan[0].target == tmp_path / "dlog2" / "DJI_0001.MP4"
+
+
+def test_rejects_name_template_that_creates_a_path(tmp_path: Path) -> None:
+    """文件名模板不得越权生成子目录。"""
+
+    source = tmp_path / "DJI_0001.MP4"
+    source.write_bytes(b"")
+
+    with pytest.raises(ValueError, match="不能包含目录"):
+        build_plan([result(source, ColorMode.DLOG)], root=tmp_path, mode="prefix", name_template="bad/{original}")
+
+
+def test_rejects_directory_template_that_escapes_root(tmp_path: Path) -> None:
+    """目录模板不得通过上级路径跳出扫描根目录。"""
+
+    source = tmp_path / "DJI_0001.MP4"
+    source.write_bytes(b"")
+
+    with pytest.raises(ValueError, match="相对路径"):
+        build_plan([result(source, ColorMode.DLOG)], root=tmp_path, mode="move", dir_template="../outside")
