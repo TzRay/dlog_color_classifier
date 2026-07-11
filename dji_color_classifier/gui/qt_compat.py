@@ -1,6 +1,6 @@
 """Qt 绑定兼容层。
 
-项目发布首选 PySide6；开发和验收环境如果只有 PyQt5，也可以运行同一套 GUI。
+发布版本首选 PySide6；开发环境仍可使用 PyQt5 运行相同界面。
 """
 
 from __future__ import annotations
@@ -14,28 +14,50 @@ def _load_pyside6() -> bool:
     """尝试加载 PySide6。"""
 
     global QT_BINDING
-    global QAbstractTableModel, QModelIndex, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-    global QAction, QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView
-    global QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QPlainTextEdit, QTableView
-    global QToolBar, QVBoxLayout, QWidget
+    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject, QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
+    global QAction, QColor, QFont
+    global QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
+    global QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit
+    global QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStackedWidget, QStyle, QTableView
+    global QToolButton, QVBoxLayout, QWidget
 
-    from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-    from PySide6.QtGui import QAction
+    from PySide6.QtCore import (
+        QAbstractTableModel,
+        QEasingCurve,
+        QModelIndex,
+        QObject,
+        QPropertyAnimation,
+        QRunnable,
+        Qt,
+        QThreadPool,
+        Signal,
+        Slot,
+    )
+    from PySide6.QtGui import QAction, QColor, QFont
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
         QComboBox,
         QFileDialog,
+        QFrame,
+        QGraphicsOpacityEffect,
+        QGridLayout,
+        QGroupBox,
         QHBoxLayout,
         QHeaderView,
         QLabel,
         QLineEdit,
         QMainWindow,
         QMessageBox,
-        QPushButton,
         QPlainTextEdit,
+        QProgressBar,
+        QPushButton,
+        QRadioButton,
+        QSizePolicy,
+        QStackedWidget,
+        QStyle,
         QTableView,
-        QToolBar,
+        QToolButton,
         QVBoxLayout,
         QWidget,
     )
@@ -48,28 +70,51 @@ def _load_pyqt5() -> bool:
     """尝试加载 PyQt5。"""
 
     global QT_BINDING
-    global QAbstractTableModel, QModelIndex, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-    global QAction, QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView
-    global QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QPlainTextEdit, QTableView
-    global QToolBar, QVBoxLayout, QWidget
+    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject, QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
+    global QAction, QColor, QFont
+    global QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
+    global QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit
+    global QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStackedWidget, QStyle, QTableView
+    global QToolButton, QVBoxLayout, QWidget
 
-    from PyQt5.QtCore import QAbstractTableModel, QModelIndex, QObject, QRunnable, Qt, QThreadPool, pyqtSignal, pyqtSlot
+    from PyQt5.QtCore import (
+        QAbstractTableModel,
+        QEasingCurve,
+        QModelIndex,
+        QObject,
+        QPropertyAnimation,
+        QRunnable,
+        Qt,
+        QThreadPool,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt5.QtGui import QColor, QFont
     from PyQt5.QtWidgets import (
         QAction,
         QApplication,
         QCheckBox,
         QComboBox,
         QFileDialog,
+        QFrame,
+        QGraphicsOpacityEffect,
+        QGridLayout,
+        QGroupBox,
         QHBoxLayout,
         QHeaderView,
         QLabel,
         QLineEdit,
         QMainWindow,
         QMessageBox,
-        QPushButton,
         QPlainTextEdit,
+        QProgressBar,
+        QPushButton,
+        QRadioButton,
+        QSizePolicy,
+        QStackedWidget,
+        QStyle,
         QTableView,
-        QToolBar,
+        QToolButton,
         QVBoxLayout,
         QWidget,
     )
@@ -81,7 +126,7 @@ def _load_pyqt5() -> bool:
 
 
 def _load_qt_binding() -> None:
-    """按优先级加载 Qt 绑定。"""
+    """按用户偏好依次加载 Qt 绑定。"""
 
     preferred = os.environ.get("DJI_COLOR_QT_BINDING", "PySide6").lower()
     loaders = [_load_pyside6, _load_pyqt5] if preferred != "pyqt5" else [_load_pyqt5, _load_pyside6]
@@ -90,33 +135,63 @@ def _load_qt_binding() -> None:
         try:
             loader()
             return
-        except ImportError as exc:
+        except (ImportError, OSError) as exc:
             last_error = exc
-    raise RuntimeError("未安装 PySide6 或 PyQt5，无法启动 GUI。请安装 GUI 依赖或使用 CLI。") from last_error
+    raise RuntimeError("未安装可用的 PySide6 或 PyQt5，无法启动 GUI。请安装 GUI 依赖或使用 CLI。") from last_error
 
 
 _load_qt_binding()
 
 
-def display_role() -> int:
-    """返回 Qt DisplayRole，兼容 Qt5/Qt6。"""
+def _enum(container, group: str, name: str):  # noqa: ANN001
+    """兼容 Qt5 与 Qt6 的分组枚举。"""
 
-    return getattr(getattr(Qt, "ItemDataRole", Qt), "DisplayRole")
+    return getattr(getattr(container, group, container), name)
+
+
+def display_role() -> int:
+    """返回显示角色。"""
+
+    return _enum(Qt, "ItemDataRole", "DisplayRole")
+
+
+def foreground_role() -> int:
+    """返回前景色角色。"""
+
+    return _enum(Qt, "ItemDataRole", "ForegroundRole")
 
 
 def horizontal_orientation() -> int:
-    """返回 Qt Horizontal，兼容 Qt5/Qt6。"""
+    """返回水平方向枚举。"""
 
-    return getattr(getattr(Qt, "Orientation", Qt), "Horizontal")
+    return _enum(Qt, "Orientation", "Horizontal")
 
 
 def resize_to_contents() -> int:
-    """返回表头 ResizeToContents 枚举，兼容 Qt5/Qt6。"""
+    """返回按内容调整列宽的枚举。"""
 
-    return getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "ResizeToContents")
+    return _enum(QHeaderView, "ResizeMode", "ResizeToContents")
+
+
+def interactive_resize() -> int:
+    """返回用户可调整列宽的枚举。"""
+
+    return _enum(QHeaderView, "ResizeMode", "Interactive")
 
 
 def yes_button() -> int:
-    """返回 QMessageBox.Yes，兼容 Qt5/Qt6。"""
+    """返回确认按钮枚举。"""
 
-    return getattr(getattr(QMessageBox, "StandardButton", QMessageBox), "Yes")
+    return _enum(QMessageBox, "StandardButton", "Yes")
+
+
+def standard_pixmap(name: str):  # noqa: ANN201
+    """按名称返回 Qt 标准图标枚举。"""
+
+    return _enum(QStyle, "StandardPixmap", name)
+
+
+def easing_out_cubic():  # noqa: ANN201
+    """返回适合页面淡入的缓出曲线。"""
+
+    return _enum(QEasingCurve, "Type", "OutCubic")
