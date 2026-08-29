@@ -4,7 +4,7 @@ DJI 视频色彩模式识别与整理工具。它读取 DJI MP4/MOV 容器中的
 
 工具不会分析视频画面，不会解码视频，也不会修改视频文件内部元数据。
 
-当前版本：`2.0.0-preview.1`。这是基于 pywebview 原生 Web 工作台的预览版，发布包由 GitHub Actions 自动构建。
+当前版本：`2.0.0-preview.2`。这是基于 pywebview 原生 Web 工作台的预览版，发布包由 GitHub Actions 自动构建。
 
 ## 主要功能
 
@@ -253,7 +253,7 @@ dji-color-web
 
 工作台支持：
 
-- 选择或拖入目录，递归扫描 MP4 / MOV / M4V，并显示 D-Log、D-Log2、普通 709、HLG HDR 和待确认统计。
+- 选择或拖入目录，递归扫描 MP4 / MOV / M4V，并显示 D-Log、D-Log2、普通 709、HLG HDR 和待确认统计。桌面拖拽路径由 pywebview Python DOM bridge 提供。
 - 以任务 ID 轮询扫描和执行进度，支持取消扫描；长任务不会阻塞页面。
 - 复制、移动、添加前缀三种整理方式，支持伴随文件和冲突策略。
 - 执行前二次确认，完成后自动写入 manifest；可载入操作记录并执行撤销。

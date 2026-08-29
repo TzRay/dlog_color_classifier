@@ -334,6 +334,19 @@
     }
   }
 
+  function handleDroppedDirectory(path) {
+    // 由 pywebview Python DOM 事件转发桌面目录的完整路径。
+    const selectedRoot = String(path || "").trim();
+    if (!selectedRoot) {
+      showToast("无法读取拖入目录", "没有收到本地完整路径，请点击“选择素材文件夹”。", true);
+      return;
+    }
+    void startScan(selectedRoot);
+  }
+
+  // Python 侧通过 window.evaluate_js 调用此入口；名称保持稳定，便于桌面壳与前端解耦。
+  window.djiColorDeskHandleDrop = handleDroppedDirectory;
+
   async function rebuildPlan() {
     if (!state.scanId) {
       updatePlanMode();
@@ -541,14 +554,16 @@
     });
     document.addEventListener("dragover", (event) => { event.preventDefault(); $("#dropOverlay").classList.add("visible"); });
     document.addEventListener("dragleave", (event) => { if (event.clientX === 0 && event.clientY === 0) $("#dropOverlay").classList.remove("visible"); });
-    document.addEventListener("drop", async (event) => {
+    document.addEventListener("drop", (event) => {
       event.preventDefault();
       $("#dropOverlay").classList.remove("visible");
-      try {
+      // pywebview 的完整桌面路径由 Python DOM drop 事件处理；这里仅保留
+      // 普通浏览器的视觉原型反馈，避免把无路径的拖拽错误地当成打开对话框。
+      if (!state.api) {
         const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-        await startScan(dropped && dropped.path ? dropped.path : await callApi("choose_directory"));
-      } catch (error) {
-        showToast("无法读取拖入目录", bridgeError(error), true);
+        const path = dropped && (dropped.pywebviewFullPath || dropped.path);
+        if (path) handleDroppedDirectory(path);
+        else showToast("无法读取拖入目录", "普通浏览器无法提供本地目录路径，请使用 dji-color-web。", true);
       }
     });
     document.addEventListener("keydown", (event) => {

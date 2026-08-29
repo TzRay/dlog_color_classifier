@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "要发布的 tag，例如 v2.0.0-preview.1"
+        description: "要发布的 tag，例如 v2.0.0-preview.2"
         required: true
         type: string
       prerelease:

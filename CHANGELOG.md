@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0-preview.2（2026-08-29）
+
+- 修复 Web 工作台拖入素材文件夹不生效的问题，改用 pywebview Python DOM `drop` 事件读取完整本地路径。
+- 增加拖拽路径桥接回归测试，并在普通浏览器中显示明确的本地路径限制提示。
+
 ## 2.0.0-preview.1（2026-08-29）
 
 - 新增 pywebview 原生 Web 工作台入口 `dji-color-web`。

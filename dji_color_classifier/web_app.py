@@ -6,6 +6,7 @@ pywebview 是可选依赖；未安装时不会影响 CLI、PySide6 GUI 和核心
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -125,6 +126,68 @@ class DesktopBridge:
             raise RuntimeError(f"无法打开系统文件对话框：{exc}") from exc
 
 
+def _extract_dropped_path(event: Any) -> str | None:
+    """从 pywebview drop 事件中提取文件或目录的绝对路径。
+
+    普通浏览器的 ``File.path`` 受安全策略限制，pywebview 会在 Python 侧
+    的 DOM 事件中补充 ``pywebviewFullPath``。同时兼容历史版本文档中出现的
+    ``domTransfer`` 字段，便于不同 pywebview 版本运行。
+    """
+
+    if not isinstance(event, dict):
+        return None
+    transfer = event.get("dataTransfer") or event.get("domTransfer") or {}
+    if not isinstance(transfer, dict):
+        return None
+    files = transfer.get("files") or []
+    if isinstance(files, dict):
+        files = [files]
+    for file_info in files:
+        if not isinstance(file_info, dict):
+            continue
+        path = file_info.get("pywebviewFullPath") or file_info.get("path")
+        if path:
+            return str(path)
+    return None
+
+
+def bind_dom_events(window: Any) -> None:
+    """绑定 pywebview 原生拖拽事件，把完整路径转发给 JavaScript。
+
+    pywebview 的 DOM 事件桥接在 Python 侧才能拿到桌面文件的完整路径；
+    前端收到路径后继续复用统一的 ``startScan`` 流程，避免复制扫描逻辑。
+    """
+
+    try:
+        from webview.dom import DOMEventHandler
+    except ImportError:
+        LOGGER.warning("当前 pywebview 不支持 DOM 事件，拖拽目录将不可用")
+        return
+
+    def prevent_drag_default(_event: dict[str, Any]) -> None:
+        """占位处理器：配合 DOMEventHandler 允许桌面目录落入窗口。"""
+
+    def on_drop(event: dict[str, Any]) -> None:
+        """读取 pywebviewFullPath，并安全地调用前端全局拖拽入口。"""
+
+        path = _extract_dropped_path(event)
+        if not path:
+            LOGGER.warning("拖拽事件未提供本地完整路径，已忽略本次拖拽")
+            return
+        LOGGER.info("收到拖入路径：%s", path)
+        script = f"window.djiColorDeskHandleDrop({json.dumps(path, ensure_ascii=False)});"
+        try:
+            window.evaluate_js(script)
+        except Exception as exc:
+            LOGGER.exception("通知前端处理拖入路径失败：%s", exc)
+
+    # prevent_default 和 stop_propagation 是 pywebview 官方拖拽事件示例所需的
+    # 参数；dragover 不读取文件，只负责让操作系统允许 drop 事件继续产生。
+    window.dom.document.events.dragenter += DOMEventHandler(prevent_drag_default, True, True)
+    window.dom.document.events.dragover += DOMEventHandler(prevent_drag_default, True, True, debounce=500)
+    window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+
+
 def main(argv: list[str] | None = None) -> int:
     """启动 DJI Color Desk Web 工作台。"""
 
@@ -155,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             resizable=True,
         )
         bridge.bind_window(window)
-        webview.start(debug=debug)
+        webview.start(bind_dom_events, window, debug=debug)
     finally:
         service.close()
     return 0
