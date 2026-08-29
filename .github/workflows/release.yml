@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "要发布的 tag，例如 v1.0.0"
+        description: "要发布的 tag，例如 v2.0.0-preview.1"
         required: true
         type: string
       prerelease:
@@ -31,14 +31,18 @@ jobs:
             platform: windows-x64
             cli_path: dist/dji-color.exe
             gui_path: dist/dji-color-gui.exe
+            web_path: dist/dji-color-web.exe
             cli_zip: dji-color-cli-windows-x64.zip
             gui_zip: dji-color-gui-windows-x64.zip
+            web_zip: dji-color-web-windows-x64.zip
           - os: macos-14
             platform: macos-arm64
             cli_path: dist/dji-color
             gui_path: dist/dji-color-gui
+            web_path: dist/dji-color-web
             cli_zip: dji-color-cli-macos-arm64.zip
             gui_zip: dji-color-gui-macos-arm64.zip
+            web_zip: dji-color-web-macos-arm64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +52,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install build dependencies
-        run: python -m pip install -e ".[gui,dev]" pyinstaller
+        run: python -m pip install -e ".[gui,web,dev]" pyinstaller
 
       - name: Test
         env:
@@ -61,6 +65,9 @@ jobs:
 
       - name: Build GUI
         run: pyinstaller --clean --noconfirm packaging/dji-color-gui.spec
+
+      - name: Build Web GUI
+        run: pyinstaller --clean --noconfirm packaging/dji-color-web.spec
 
       - name: Smoke test CLI on Windows
         if: runner.os == 'Windows'
@@ -84,7 +91,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          chmod +x "${{ matrix.cli_path }}" "${{ matrix.gui_path }}"
+          chmod +x "${{ matrix.cli_path }}" "${{ matrix.gui_path }}" "${{ matrix.web_path }}"
           "./${{ matrix.cli_path }}" version
           "./${{ matrix.gui_path }}" --smoke
 
@@ -95,6 +102,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Compress-Archive -Path "${{ matrix.cli_path }}" -DestinationPath "release/${{ matrix.cli_zip }}" -Force
           Compress-Archive -Path "${{ matrix.gui_path }}" -DestinationPath "release/${{ matrix.gui_zip }}" -Force
+          Compress-Archive -Path "${{ matrix.web_path }}" -DestinationPath "release/${{ matrix.web_zip }}" -Force
 
       - name: Package macOS assets
         if: runner.os == 'macOS'
@@ -103,6 +111,7 @@ jobs:
           mkdir -p release
           zip -j "release/${{ matrix.cli_zip }}" "${{ matrix.cli_path }}"
           zip -j "release/${{ matrix.gui_zip }}" "${{ matrix.gui_path }}"
+          zip -j "release/${{ matrix.web_zip }}" "${{ matrix.web_path }}"
 
       - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
@@ -152,6 +161,8 @@ jobs:
           files: |
             release/dji-color-cli-windows-x64.zip
             release/dji-color-gui-windows-x64.zip
+            release/dji-color-web-windows-x64.zip
             release/dji-color-cli-macos-arm64.zip
             release/dji-color-gui-macos-arm64.zip
+            release/dji-color-web-macos-arm64.zip
             release/SHA256SUMS.txt

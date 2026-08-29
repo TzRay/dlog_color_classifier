@@ -21,6 +21,10 @@ jobs:
             target: windows-gui
             spec: packaging/dji-color-gui.spec
             artifact: dji-color-gui-windows-x64
+          - os: windows-latest
+            target: windows-web
+            spec: packaging/dji-color-web.spec
+            artifact: dji-color-web-windows-x64
           - os: macos-14
             target: macos-cli-arm64
             spec: packaging/dji-color-cli.spec
@@ -29,6 +33,10 @@ jobs:
             target: macos-gui-arm64
             spec: packaging/dji-color-gui.spec
             artifact: dji-color-gui-macos-arm64
+          - os: macos-14
+            target: macos-web-arm64
+            spec: packaging/dji-color-web.spec
+            artifact: dji-color-web-macos-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +46,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -e ".[gui,dev]" pyinstaller
+        run: python -m pip install -e ".[gui,web,dev]" pyinstaller
 
       - name: Test
         env:

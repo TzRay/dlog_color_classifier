@@ -10,6 +10,7 @@ from dji_color_classifier.core.models import ColorMode, ConflictPolicy, PlanActi
 DEFAULT_PREFIXES = {
     ColorMode.DLOG: "dlog_",
     ColorMode.DLOG2: "dlog2_",
+    ColorMode.REC2100_HLG: "hlg_",
 }
 
 DEFAULT_DIRS = {
@@ -105,11 +106,11 @@ def _prefix_target(result: ScanResult, name_template: str | None) -> Path | None
     """生成前缀重命名目标。"""
 
     path = result.path
-    if result.mode not in {ColorMode.DLOG, ColorMode.DLOG2}:
+    if result.mode not in {ColorMode.DLOG, ColorMode.DLOG2, ColorMode.REC2100_HLG}:
         return None
 
     lower_name = path.name.lower()
-    if lower_name.startswith(("dlog_", "dlog2_", "dlog", "dlog2")):
+    if lower_name.startswith(("dlog_", "dlog2_", "hlg_", "dlog", "dlog2", "hlg")):
         return None
 
     if name_template:

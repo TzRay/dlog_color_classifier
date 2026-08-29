@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-preview.1（2026-08-29）
+
+- 新增 pywebview 原生 Web 工作台入口 `dji-color-web`。
+- 新增 Python application service、任务状态/进度/取消协议和结构化 Web DTO。
+- 原型页面接入真实扫描、整理计划、执行、报告导出、manifest 撤销和 HLG HDR 统计。
+- 新增 Web 服务层端到端验收测试与 Web 版 PyInstaller spec。
+
 ## 1.1.0
 
 - 新增结构化 QuickTime `ColorGammaSxS` 标签读取，优先使用文件内明确色彩模式。

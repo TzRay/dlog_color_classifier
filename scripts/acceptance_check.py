@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from dji_color_classifier.core.scanner import scan_directory, summarize_results  # noqa: E402
+from dji_color_classifier.web_service import ApplicationService  # noqa: E402
 
 
 def main() -> int:
@@ -43,10 +44,37 @@ def main() -> int:
     if not results:
         raise RuntimeError("样本目录没有可扫描视频")
 
+    run_web_service_check(sample_dir)
     run_gui_plan_check(sample_dir)
     run_gui_execution_check()
     print("v1.0 本地验收通过")
     return 0
+
+
+def run_web_service_check(sample_dir: Path) -> None:
+    """使用真实样本验证 Web 服务的扫描、DTO 和计划生成，不修改样本。"""
+
+    service = ApplicationService(max_workers=1)
+    try:
+        handle = service.start_scan({"directory": str(sample_dir), "recursive": True})
+        snapshot = wait_for_service_task(service, handle["task_id"], timeout=60)
+        scan = snapshot["result"]
+        results = scan["results"]
+        if scan["summary"]["total"] != len(results):
+            raise RuntimeError("Web DTO 的扫描总数与结果数量不一致")
+        plan = service.build_plan(
+            {
+                "scan_id": scan["scan_id"],
+                "mode": "copy",
+                "conflict_policy": "suffix",
+                "with_sidecars": False,
+            }
+        )
+        if plan["root"] != str(sample_dir.resolve()):
+            raise RuntimeError("Web 计划根目录与扫描目录不一致")
+        print(f"Web 服务验收：扫描={len(results)}，DTO={len(scan['results'])}，复制计划={plan['actionable_count']}")
+    finally:
+        service.close()
 
 
 def run_gui_plan_check(sample_dir: Path) -> None:
@@ -129,6 +157,20 @@ def wait_until(predicate, app, *, timeout: int) -> None:
             return
         time.sleep(0.05)
     raise TimeoutError("等待 GUI 后台任务超时")
+
+
+def wait_for_service_task(service: ApplicationService, task_id: str, *, timeout: int) -> dict:
+    """等待 Web 服务任务完成并返回快照。"""
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        snapshot = service.get_task_status(task_id)
+        if snapshot["state"] == "completed":
+            return snapshot
+        if snapshot["state"] in {"failed", "cancelled"}:
+            raise RuntimeError(f"Web 服务任务未完成：{snapshot}")
+        time.sleep(0.05)
+    raise TimeoutError(f"等待 Web 服务任务超时：{task_id}")
 
 
 if __name__ == "__main__":

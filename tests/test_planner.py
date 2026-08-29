@@ -42,8 +42,8 @@ def test_move_uses_mode_directories(tmp_path: Path) -> None:
     assert plan[0].target == tmp_path / "dlog2" / "DJI_0001.MP4"
 
 
-def test_move_uses_hlg_directory_without_adding_prefix(tmp_path: Path) -> None:
-    """HLG 应归入独立目录，前缀模式仍只处理两种 Log。"""
+def test_hlg_uses_directory_and_prefix(tmp_path: Path) -> None:
+    """HLG 应归入独立目录，并在前缀模式使用 hlg_。"""
 
     source = tmp_path / "DJI_0001.MP4"
     source.write_bytes(b"")
@@ -53,7 +53,7 @@ def test_move_uses_hlg_directory_without_adding_prefix(tmp_path: Path) -> None:
     prefix_plan = build_plan([hlg_result], root=tmp_path, mode="prefix")
 
     assert move_plan[0].target == tmp_path / "hlg" / "DJI_0001.MP4"
-    assert prefix_plan[0].skipped
+    assert prefix_plan[0].target == tmp_path / "hlg_DJI_0001.MP4"
 
 
 def test_conflicting_metadata_is_not_automatically_organized(tmp_path: Path) -> None:

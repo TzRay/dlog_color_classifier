@@ -42,4 +42,16 @@ GUI 面向“识别速度快、功能简单”的使用场景，不再采用侧�
 - 保留 `path_edit`、`mode_combo`、计划生成和执行方法，兼容现有测试与验收脚本。
 - 统一行模型继续保证伴随文件与 `PlanItem` 对齐。
 
+## Web 工作台验收
+
+- `prototype/index.html` 保留单页工作台布局，新增 HLG HDR 统计卡片和筛选项。
+- 页面直接打开时显示“等待本地服务”空态，不伪造扫描结果；由 `dji-color-web` 启动时通过 pywebview bridge 连接 Python 核心。
+- 选择目录后使用 `task_id` 轮询扫描状态；扫描完成后使用真实 DTO 渲染结果、模式统计和整理计划。
+- 复制、移动、前缀三种模式会重新生成 `plan_id`；冲突策略、伴随文件和递归范围变化会使计划重新计算。
+- 执行与撤销都必须经过确认窗口，服务端拒绝缺少 `confirmed=true` 的请求。
+- 执行完成自动写入 manifest；报告导出、载入记录和撤销均通过 Python 服务处理。
+- Web 服务层端到端测试覆盖扫描、HLG 统计、复制、取消、manifest 和撤销；当前本地结果为 34 项测试通过。
+
+浏览器自动化备注：本机 `npx` 可用，但 Playwright CLI 依赖下载受到 npm registry/EACCES 环境限制；已完成 `node --check prototype/app.js`、Python 服务层验收和静态 DOM/源码检查，未伪造浏览器截图结果。
+
 final result: passed

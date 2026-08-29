@@ -881,12 +881,12 @@ class MainWindow(QMainWindow):
 
         mode = str(self.mode_combo.currentData())
         count = (
-            sum(result.mode.value in {"dlog", "dlog2"} for result in self.results)
+            sum(result.mode.value in {"dlog", "dlog2", "rec2100_hlg"} for result in self.results)
             if mode == "prefix"
             else sum(result.evidence.primary_source != "conflict" for result in self.results)
         )
         descriptions = {
-            "prefix": (f"将为 {count} 个 D-Log / D-Log2 视频添加前缀。", f"添加前缀（{count}）"),
+            "prefix": (f"将为 {count} 个 D-Log / D-Log2 / HLG HDR 视频添加前缀。", f"添加前缀（{count}）"),
             "move": (f"将移动 {count} 个视频到分类文件夹，原位置将不再保留这些文件。", f"移动并整理（{count}）"),
             "copy": (f"将复制 {count} 个视频到分类文件夹，全部原始文件保持不变。", f"复制并整理（{count}）"),
         }

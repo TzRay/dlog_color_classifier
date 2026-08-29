@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dlog-color-classifier"
-version = "1.1.0"
+version = "2.0.0rc1"
 description = "DJI D-Log / D-Log2 metadata classifier, organizer, CLI and GUI"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -12,16 +12,21 @@ dependencies = []
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.6"]
+web = ["pywebview>=5.3"]
 dev = ["pytest>=8.0", "ruff>=0.5"]
 
 [project.scripts]
 dji-color = "dji_color_classifier.cli:main"
+dji-color-web = "dji_color_classifier.web_app:main"
 
 [project.gui-scripts]
 dji-color-gui = "dji_color_classifier.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["dji_color_classifier*"]
+
+[tool.setuptools.data-files]
+"prototype" = ["prototype/index.html", "prototype/app.js"]
 
 [tool.ruff]
 line-length = 120

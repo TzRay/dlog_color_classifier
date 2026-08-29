@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#341c1d" />
+    <title>DJI Color Desk · 素材整理工作台</title>
+    <style>
+      /* 颜色令牌集中管理，方便后续迁移到 Vue 主题变量。 */
+      :root {
+        --ink: #2c2020;
+        --ink-soft: #665353;
+        --muted: #8f8180;
+        --paper: #f6f7f4;
+        --surface: #ffffff;
+        --line: #ece4e2;
+        --line-strong: #decfcb;
+        --mint: #fff0ef;
+        --mint-strong: #efaaa3;
+        --green: #d92d20;
+        --green-dark: #b42318;
+        --orange: #d98332;
+        --yellow: #f3c969;
+        --blue: #5d9eb2;
+        --purple: #8b7fc4;
+        --danger: #b55654;
+        --shadow: 0 20px 48px rgba(72, 34, 31, 0.08);
+        --shadow-soft: 0 8px 22px rgba(72, 34, 31, 0.06);
+      }
+
+      * { box-sizing: border-box; }
+
+      html { min-width: 320px; background: var(--paper); }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 79% -8%, rgba(248, 218, 214, 0.62), transparent 30rem),
+          linear-gradient(135deg, #faf9f8 0%, #f7f4f3 100%);
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button, input { font: inherit; }
+      button { border: 0; cursor: pointer; }
+      button:focus-visible, input:focus-visible { outline: 3px solid rgba(217, 45, 32, 0.24); outline-offset: 2px; }
+
+      .app-shell { display: flex; min-height: 100vh; }
+
+      .sidebar {
+        position: fixed;
+        z-index: 5;
+        inset: 0 auto 0 0;
+        display: flex;
+        width: 248px;
+        flex-direction: column;
+        padding: 28px 18px 22px;
+        color: #fff7f6;
+        background: #341c1d;
+      }
+
+      .brand { display: flex; align-items: center; gap: 11px; padding: 0 12px 38px; }
+      .brand-mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid rgba(244, 193, 186, 0.38);
+        border-radius: 11px;
+        color: #f4c4be;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: -0.06em;
+        box-shadow: inset 0 0 0 5px rgba(244, 193, 186, 0.08);
+      }
+      .brand-name { font-size: 13px; font-weight: 750; letter-spacing: 0.13em; }
+      .brand-subtitle { margin-top: 3px; color: #c3948f; font-size: 10px; letter-spacing: 0.16em; }
+
+      .sidebar-label { padding: 0 12px 10px; color: #ad817e; font-size: 10px; font-weight: 750; letter-spacing: 0.13em; text-transform: uppercase; }
+      .nav-list { display: grid; gap: 5px; }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        width: 100%;
+        padding: 12px 13px;
+        border-radius: 12px;
+        color: #c4a8a4;
+        background: transparent;
+        text-align: left;
+        transition: 180ms ease;
+      }
+      .nav-item:hover { color: #fff7f6; background: rgba(255, 255, 255, 0.07); }
+      .nav-item.active { color: #fff7f6; background: rgba(217, 45, 32, 0.2); box-shadow: inset 3px 0 0 #ef938b; }
+      .nav-icon { width: 17px; color: #e7a49e; font-size: 16px; text-align: center; }
+      .nav-item:not(.active) .nav-icon { color: #a67a77; }
+      .nav-badge { margin-left: auto; padding: 3px 7px; border-radius: 999px; color: #f0b7b0; background: rgba(217, 45, 32, 0.18); font-size: 10px; }
+
+      .sidebar-bottom { margin-top: auto; }
+      .connection-card { padding: 14px; border: 1px solid rgba(244, 193, 186, 0.17); border-radius: 14px; background: rgba(255, 255, 255, 0.06); }
+      .connection-head { display: flex; align-items: center; gap: 8px; color: #f4d0cb; font-size: 12px; font-weight: 700; }
+      .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef938b; box-shadow: 0 0 0 4px rgba(239, 147, 139, 0.12); }
+      .connection-copy { margin: 9px 0 0; color: #c3948e; font-size: 11px; line-height: 1.55; }
+      .version { margin: 17px 12px 0; color: #a77c78; font-size: 10px; letter-spacing: 0.08em; }
+
+      .main { width: calc(100% - 248px); min-width: 0; margin-left: 248px; }
+      .topbar { display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 clamp(24px, 4vw, 62px); border-bottom: 1px solid rgba(211, 225, 217, 0.72); }
+      .breadcrumb { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+      .breadcrumb strong { color: var(--ink); font-weight: 700; }
+      .breadcrumb-separator { color: #cbb7b3; }
+      .top-actions { display: flex; align-items: center; gap: 10px; }
+      .top-action { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border-radius: 9px; color: var(--ink-soft); background: transparent; font-size: 12px; transition: 160ms ease; }
+      .top-action:hover { color: var(--ink); background: rgba(255, 255, 255, 0.78); }
+
+      .content { width: min(1390px, 100%); margin: 0 auto; padding: 34px clamp(24px, 4vw, 62px) 46px; }
+      .hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+      h1 { max-width: 650px; margin: 0; font-size: clamp(24px, 2.5vw, 32px); font-weight: 760; letter-spacing: -0.055em; line-height: 1.08; }
+      .hero-actions { display: flex; flex-shrink: 0; align-items: center; gap: 10px; }
+
+      .button-primary, .button-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 0 17px; border-radius: 10px; font-size: 12px; font-weight: 750; transition: 180ms ease; }
+      .button-primary { color: #fffafa; background: var(--green); box-shadow: 0 6px 12px rgba(217, 45, 32, 0.18); }
+      .button-primary:hover { background: var(--green-dark); transform: translateY(-1px); box-shadow: 0 9px 18px rgba(180, 35, 24, 0.24); }
+      .button-secondary { color: var(--ink-soft); border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.78); }
+      .button-secondary:hover { color: var(--ink); border-color: #d8aaa4; background: #fff; }
+      .button-primary:disabled { cursor: not-allowed; color: #9cbbb0; background: #e5eee9; box-shadow: none; transform: none; }
+
+      .workflow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 22px; }
+      .workflow-step { position: relative; display: flex; align-items: center; gap: 11px; min-height: 58px; padding: 11px 16px; border: 1px solid transparent; border-radius: 12px; background: rgba(255, 255, 255, 0.42); }
+      .workflow-step.current { border-color: #f0c3bd; background: #fff9f8; box-shadow: 0 3px 10px rgba(145, 50, 42, 0.05); }
+      .workflow-step.done { color: var(--ink-soft); }
+      .step-number { display: grid; width: 25px; height: 25px; flex-shrink: 0; place-items: center; border: 1px solid #d8ccc9; border-radius: 8px; color: #8f8180; font-size: 10px; font-weight: 800; }
+      .workflow-step.done .step-number { border-color: #efb8b1; color: var(--green); background: var(--mint); }
+      .workflow-step.current .step-number { color: #fff; border-color: var(--green); background: var(--green); }
+      .step-title { font-size: 12px; font-weight: 750; }
+      .step-subtitle { margin-top: 3px; color: var(--muted); font-size: 10px; }
+      .step-check { margin-left: auto; color: var(--green); font-size: 14px; }
+
+      .folder-bar { display: flex; align-items: center; gap: 15px; min-height: 84px; margin-bottom: 20px; padding: 15px 17px; border: 1px solid #f0cbc6; border-radius: 14px; background: linear-gradient(96deg, #fff4f2, #fffafa); }
+      .folder-icon { display: grid; width: 42px; height: 42px; flex-shrink: 0; place-items: center; border-radius: 12px; color: #b42318; background: #ffe3df; font-size: 19px; }
+      .folder-meta { min-width: 0; }
+      .folder-label { margin-bottom: 4px; color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+      .folder-path { max-width: min(690px, 65vw); overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+      .folder-detail { margin-top: 4px; color: var(--muted); font-size: 11px; }
+      .folder-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+      .text-button { padding: 6px; color: var(--green); background: transparent; font-size: 11px; font-weight: 750; }
+      .text-button:hover { text-decoration: underline; }
+
+      .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 24px; }
+      .summary-card { min-height: 106px; padding: 15px 16px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255, 255, 255, 0.83); box-shadow: 0 3px 11px rgba(39, 74, 60, 0.025); transition: 180ms ease; }
+      .summary-card:hover, .summary-card.selected { border-color: #e8b5af; box-shadow: var(--shadow-soft); transform: translateY(-1px); }
+      .summary-top { display: flex; align-items: center; justify-content: space-between; }
+      .summary-label { color: var(--muted); font-size: 11px; font-weight: 650; }
+      .summary-symbol { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 8px; color: var(--green); background: var(--mint); font-size: 13px; }
+      .summary-card:nth-child(2) .summary-symbol { color: var(--orange); background: #fff0d9; }
+      .summary-card:nth-child(3) .summary-symbol { color: var(--purple); background: #eeeafd; }
+      .summary-card:nth-child(4) .summary-symbol { color: var(--blue); background: #e4f1f5; }
+      .summary-card:nth-child(5) .summary-symbol { color: var(--purple); background: #eeeafd; }
+      .summary-card:nth-child(6) .summary-symbol { color: #aa761c; background: #fff4cf; }
+      .summary-value { margin-top: 14px; font-size: 25px; font-weight: 760; letter-spacing: -0.05em; }
+      .summary-note { margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+      .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(310px, 0.86fr); align-items: start; gap: 20px; }
+      .surface { border: 1px solid var(--line); border-radius: 17px; background: rgba(255, 255, 255, 0.88); box-shadow: var(--shadow); }
+      .results-surface { min-width: 0; padding: 23px 24px 19px; }
+      .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
+      .section-title { margin: 0; font-size: 17px; font-weight: 780; letter-spacing: -0.035em; }
+      .section-helper { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .heading-action { padding: 6px 0; color: var(--green); background: transparent; font-size: 11px; font-weight: 750; white-space: nowrap; }
+      .heading-action:hover { text-decoration: underline; }
+      .filter-row { display: flex; align-items: center; justify-content: space-between; gap: 13px; margin: 23px 0 16px; }
+      .filter-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+      .filter-pill { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-soft); background: #fbfcfa; font-size: 10px; font-weight: 700; transition: 160ms ease; }
+      .filter-pill:hover { border-color: #e4b1aa; color: var(--green); }
+      .filter-pill.active { border-color: #e5aaa3; color: var(--green-dark); background: var(--mint); }
+      .search-box { display: flex; width: min(188px, 35%); align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: #aa9693; background: #fffdfc; }
+      .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; }
+
+      .table-wrap { max-height: 378px; overflow-y: auto; overflow-x: hidden; border: 1px solid var(--line); border-radius: 11px; scrollbar-color: #e3a19a #fff8f7; scrollbar-width: thin; }
+      .result-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .result-table th { position: sticky; top: 0; z-index: 1; padding: 11px 12px; color: #968583; background: #fcf8f7; font-size: 10px; font-weight: 750; letter-spacing: 0.04em; text-align: left; }
+      .result-table td { overflow: hidden; padding: 13px 12px; border-top: 1px solid #f2e9e7; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .result-table tr:hover td { background: #fffafa; }
+      .result-table th:nth-child(1) { width: 70px; }
+      .result-table th:nth-child(2) { width: 29%; }
+      .result-table th:nth-child(3) { width: 20%; }
+      .result-table th:nth-child(4) { width: 19%; }
+      .result-table th:nth-child(5) { width: 19%; }
+      .status { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: 7px; font-size: 10px; font-weight: 750; }
+      .status::before { width: 5px; height: 5px; content: ""; border-radius: 50%; background: currentColor; }
+      .status.ready { color: #16734f; background: #eaf7ee; }
+      .status.review { color: #9a6c17; background: #fff7dc; }
+      .status.skip { color: #8879b5; background: #f0edfd; }
+      .file-name { color: var(--ink); font-weight: 700; }
+      .mode-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 3px; background: var(--green); }
+      .mode-dot.dlog2 { background: var(--orange); }
+      .mode-dot.rec709 { background: var(--blue); }
+      .mode-dot.hlg { background: var(--purple); }
+      .mode-dot.unknown { background: var(--yellow); }
+      .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 16px; color: var(--muted); font-size: 10px; }
+      .table-footer strong { color: var(--ink-soft); }
+
+      .plan-surface { position: sticky; top: 18px; overflow: hidden; padding: 0; }
+      .plan-head { padding: 22px 22px 18px; border-bottom: 1px solid #f0c4bf; background: linear-gradient(140deg, #fff0ee, #fff9f8); }
+      .plan-kicker { display: flex; align-items: center; justify-content: space-between; color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+      .safe-pill { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: 6px; color: #a24e47; background: rgba(239, 170, 163, 0.24); font-size: 9px; letter-spacing: 0; text-transform: none; }
+      .safe-pill::before { content: "●"; font-size: 8px; }
+      .plan-title { margin: 12px 0 5px; font-size: 18px; font-weight: 780; letter-spacing: -0.04em; }
+      .plan-copy { margin: 0; color: #846967; font-size: 11px; line-height: 1.55; }
+      .plan-body { padding: 18px 22px 21px; }
+      .plan-label { margin: 0 0 9px; color: var(--muted); font-size: 10px; font-weight: 750; }
+      .mode-options { display: grid; gap: 7px; }
+      .mode-option { display: flex; min-height: 48px; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; text-align: left; transition: 150ms ease; }
+      .mode-option:hover { border-color: #e2b0aa; }
+      .mode-option.selected { border-color: #db928a; background: #fff8f7; box-shadow: inset 0 0 0 1px rgba(180, 35, 24, 0.1); }
+      .radio { display: grid; width: 16px; height: 16px; flex-shrink: 0; place-items: center; border: 1.5px solid #cdbdb9; border-radius: 50%; }
+      .mode-option.selected .radio { border-color: var(--green); }
+      .mode-option.selected .radio::after { width: 7px; height: 7px; content: ""; border-radius: 50%; background: var(--green); }
+      .mode-option-title { color: var(--ink); font-size: 11px; font-weight: 750; }
+      .mode-option-copy { margin-top: 3px; color: var(--muted); font-size: 9px; }
+      .mode-option-count { margin-left: auto; color: var(--ink-soft); font-size: 11px; font-weight: 760; }
+      .plan-preview { margin: 17px 0; padding: 12px; border-radius: 9px; background: #fbf6f5; }
+      .preview-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .preview-row + .preview-row { margin-top: 9px; }
+      .preview-label { color: var(--muted); font-size: 10px; }
+      .preview-value { max-width: 65%; overflow: hidden; color: var(--ink-soft); font-size: 10px; font-weight: 700; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+      .preview-value.green { color: var(--green); }
+      .toggle-row { display: flex; align-items: center; justify-content: space-between; margin: 1px 0 16px; padding: 2px 0; }
+      .toggle-copy { color: var(--ink-soft); font-size: 11px; }
+      .toggle-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+      .toggle { position: relative; width: 31px; height: 18px; padding: 0; border-radius: 999px; background: #d5c7c4; transition: 160ms ease; }
+      .toggle::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; content: ""; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(72, 34, 31, 0.2); transition: 160ms ease; }
+      .toggle.on { background: var(--green); }
+      .toggle.on::after { left: 16px; }
+      .plan-button { width: 100%; min-height: 48px; border-radius: 10px; font-size: 12px; }
+      .export-button { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; margin-top: 9px; padding: 8px; color: var(--ink-soft); background: transparent; font-size: 10px; font-weight: 700; }
+      .export-button:hover { color: var(--green); }
+      .plan-note { display: flex; gap: 8px; margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; line-height: 1.55; }
+      .plan-note-icon { color: #b39a96; font-size: 13px; }
+
+      .activity { display: block; margin-top: 20px; }
+      .activity-surface { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 19px; }
+      .activity-main { display: flex; min-width: 0; align-items: center; gap: 12px; }
+      .activity-icon { display: grid; width: 31px; height: 31px; flex-shrink: 0; place-items: center; border-radius: 9px; color: var(--green); background: var(--mint); font-size: 14px; }
+      .activity-title { overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+      .activity-subtitle { margin-top: 4px; color: var(--muted); font-size: 10px; }
+      .activity-side { display: flex; align-items: center; gap: 13px; }
+      .activity-status { color: var(--green); font-size: 10px; font-weight: 750; white-space: nowrap; }
+
+      .drop-overlay { position: fixed; z-index: 20; inset: 0; display: none; place-items: center; padding: 24px; background: rgba(52, 28, 29, 0.32); backdrop-filter: blur(4px); }
+      .drop-overlay.visible { display: grid; }
+      .drop-card { display: grid; width: min(500px, 100%); min-height: 250px; place-items: center; padding: 30px; border: 2px dashed #e48b83; border-radius: 18px; color: var(--green); background: #fffafa; box-shadow: 0 20px 65px rgba(92, 30, 26, 0.2); text-align: center; }
+      .drop-card-icon { font-size: 32px; }
+      .drop-card-title { margin-top: 12px; font-size: 18px; font-weight: 780; }
+      .drop-card-copy { margin: 7px 0 0; color: var(--ink-soft); font-size: 11px; }
+
+      .drawer-backdrop, .modal-backdrop { position: fixed; z-index: 30; inset: 0; display: none; background: rgba(16, 35, 35, 0.24); backdrop-filter: blur(3px); }
+      .drawer-backdrop.visible, .modal-backdrop.visible { display: block; }
+      .settings-drawer { position: fixed; z-index: 31; top: 0; right: 0; bottom: 0; display: flex; width: min(390px, 100%); flex-direction: column; padding: 24px; border-left: 1px solid var(--line); background: #fbfdfb; box-shadow: -20px 0 50px rgba(18, 49, 38, 0.12); transform: translateX(105%); transition: 220ms ease; }
+      .settings-drawer.visible { transform: translateX(0); }
+      .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+      .drawer-title { margin: 0; font-size: 20px; font-weight: 780; letter-spacing: -0.04em; }
+      .drawer-copy { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .close-button { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 8px; color: var(--ink-soft); background: #f0f5f1; font-size: 17px; }
+      .close-button:hover { color: var(--ink); background: #e5eee8; }
+      .setting-group { padding: 20px 0; border-bottom: 1px solid var(--line); }
+      .setting-title { margin-bottom: 11px; color: var(--ink); font-size: 11px; font-weight: 760; }
+      .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; color: var(--ink-soft); font-size: 11px; }
+      .setting-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+      .select-like { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-soft); background: #fff; font-size: 10px; }
+      .setting-select { max-width: 148px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-soft); background: #fff; font-size: 10px; }
+      .drawer-footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+
+      .modal { position: fixed; z-index: 32; top: 50%; left: 50%; width: min(470px, calc(100% - 32px)); padding: 25px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 24px 70px rgba(18, 49, 38, 0.19); opacity: 0; pointer-events: none; transform: translate(-50%, -46%); transition: 180ms ease; }
+      .modal.visible { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+      .modal-kicker { color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; }
+      .modal-title { margin: 9px 0 8px; font-size: 19px; font-weight: 780; letter-spacing: -0.04em; }
+      .modal-copy { margin: 0; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
+      .modal-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 19px 0; }
+      .modal-stat { padding: 11px; border-radius: 9px; background: #f5f8f5; }
+      .modal-stat strong { display: block; color: var(--ink); font-size: 17px; }
+      .modal-stat span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+      .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 21px; }
+
+      .toast { position: fixed; z-index: 50; right: 24px; bottom: 24px; display: flex; max-width: min(390px, calc(100% - 48px)); align-items: flex-start; gap: 10px; padding: 13px 15px; border: 1px solid #b8dfc5; border-radius: 11px; color: #22623f; background: #effaf2; box-shadow: 0 13px 30px rgba(18, 77, 43, 0.14); font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(12px); transition: 180ms ease; }
+      .toast.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+      .toast strong { display: block; margin-bottom: 3px; font-size: 11px; }
+      .toast-copy { color: #547464; line-height: 1.45; }
+
+      @media (max-width: 1060px) {
+        .sidebar { width: 82px; padding-inline: 12px; }
+        .brand { justify-content: center; padding-inline: 0; }
+        .brand-copy, .sidebar-label, .nav-item span:not(.nav-icon), .connection-card, .version { display: none; }
+        .nav-item { justify-content: center; padding-inline: 0; }
+        .nav-badge { display: none; }
+        .main { width: calc(100% - 82px); margin-left: 82px; }
+        .summary-grid { grid-template-columns: repeat(6, minmax(110px, 1fr)); overflow-x: auto; padding-bottom: 3px; }
+        .summary-card { min-width: 125px; }
+      }
+
+      @media (max-width: 790px) {
+        .topbar { padding-inline: 20px; }
+        .content { padding: 30px 20px 35px; }
+        .hero { display: block; }
+        .hero-actions { margin-top: 21px; }
+        .workspace-grid, .activity { grid-template-columns: 1fr; }
+        .plan-surface { position: static; }
+        .workflow-step { padding-inline: 10px; }
+        .step-subtitle { display: none; }
+        .activity-surface { align-items: flex-start; }
+      }
+
+      @media (max-width: 570px) {
+        .sidebar { position: fixed; top: auto; width: 100%; height: 61px; flex-direction: row; align-items: center; padding: 7px 15px; }
+        .brand, .sidebar-bottom { display: none; }
+        .sidebar-label { display: none; }
+        .nav-list { display: flex; width: 100%; justify-content: space-around; }
+        .nav-item { width: auto; min-width: 54px; padding: 9px; }
+        .nav-item.active { box-shadow: inset 0 -3px 0 #86d0a5; }
+        .main { width: 100%; margin-left: 0; padding-bottom: 61px; }
+        .topbar { height: 58px; }
+        .breadcrumb span:not(.breadcrumb-separator) { display: none; }
+        .top-action span { display: none; }
+        .top-action { padding: 8px; }
+        .hero-actions { width: 100%; }
+        .hero-actions .button-primary, .hero-actions .button-secondary { flex: 1; }
+        .workflow { gap: 4px; }
+        .workflow-step { justify-content: center; padding: 8px 5px; }
+        .step-number { width: 22px; height: 22px; }
+        .step-title { font-size: 10px; }
+        .folder-bar { align-items: flex-start; }
+        .folder-actions { align-self: center; }
+        .folder-actions .text-button { font-size: 0; }
+        .folder-actions .text-button::after { content: "换目录"; font-size: 10px; }
+        .results-surface { padding: 19px 14px 16px; }
+        .filter-row { display: block; }
+        .search-box { width: 100%; margin-top: 10px; }
+        .table-wrap { overflow-x: auto; }
+        .result-table { min-width: 650px; }
+        .activity-side { flex-direction: column; align-items: flex-end; gap: 5px; }
+        .modal-summary { gap: 5px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark">dji</div>
+          <div class="brand-copy">
+            <div class="brand-name">COLOR DESK</div>
+            <div class="brand-subtitle">LOCAL WORKBENCH</div>
+          </div>
+        </div>
+
+        <div class="sidebar-label">Workspace</div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-nav="识别工作台" type="button"><span class="nav-icon">⌁</span><span>识别工作台</span></button>
+          <button class="nav-item" data-nav="操作记录" type="button"><span class="nav-icon">◷</span><span>操作记录</span><span class="nav-badge">3</span></button>
+          <button class="nav-item" data-nav="使用说明" type="button"><span class="nav-icon">?</span><span>使用说明</span></button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="connection-card">
+            <div class="connection-head"><span class="connection-dot"></span>本地服务已连接</div>
+            <p class="connection-copy">Python 核心就绪<br />Bridge · 安全本地模式</p>
+          </div>
+          <div class="version">v2.0 preview · Python bridge workbench</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="breadcrumb"><span>工作台</span><span class="breadcrumb-separator">/</span><strong>识别与整理</strong></div>
+          <div class="top-actions">
+            <button class="top-action" id="openSettings" type="button"><span>设置</span>⚙</button>
+            <button class="top-action" id="showLogs" type="button"><span>运行日志</span>≡</button>
+          </div>
+        </header>
+
+        <div class="content">
+          <section class="hero" aria-labelledby="pageTitle">
+            <h1 id="pageTitle">识别与整理</h1>
+            <div class="hero-actions">
+              <button class="button-secondary" id="loadManifest" type="button"><span>↥</span>载入记录</button>
+              <button class="button-primary" id="chooseFolder" type="button"><span>＋</span>选择素材文件夹</button>
+            </div>
+          </section>
+
+          <section class="workflow" aria-label="工作流程">
+            <div class="workflow-step done"><div class="step-number">✓</div><div><div class="step-title">选择目录</div><div class="step-subtitle">已接入本地素材</div></div><div class="step-check">✓</div></div>
+            <div class="workflow-step current"><div class="step-number">02</div><div><div class="step-title">确认识别结果</div><div class="step-subtitle">检查待确认文件</div></div></div>
+            <div class="workflow-step"><div class="step-number">03</div><div><div class="step-title">执行整理</div><div class="step-subtitle">预演后安全执行</div></div></div>
+          </section>
+
+          <section class="folder-bar" id="folderBar" aria-label="当前目录">
+            <div class="folder-icon">▱</div>
+            <div class="folder-meta">
+              <div class="folder-label">当前扫描目录</div>
+              <div class="folder-path" id="folderPath">D:\\素材库\\2026-08-27_青城山日落</div>
+              <div class="folder-detail" id="folderDetail">包含子文件夹 · 上次识别于 2 分钟前</div>
+            </div>
+            <div class="folder-actions"><button class="text-button" id="cancelTask" type="button" hidden>取消任务</button><button class="text-button" id="rescanFolder" type="button">重新识别</button><button class="text-button" id="changeFolder" type="button">换目录</button></div>
+          </section>
+
+          <section class="summary-grid" aria-label="识别概览统计">
+            <button class="summary-card selected" data-filter="all" type="button"><div class="summary-top"><span class="summary-label">全部视频</span><span class="summary-symbol">◉</span></div><div class="summary-value">148</div><div class="summary-note">本次扫描发现</div></button>
+            <button class="summary-card" data-filter="dlog" type="button"><div class="summary-top"><span class="summary-label">D-Log</span><span class="summary-symbol">◒</span></div><div class="summary-value">86</div><div class="summary-note">高置信度</div></button>
+            <button class="summary-card" data-filter="dlog2" type="button"><div class="summary-top"><span class="summary-label">D-Log2</span><span class="summary-symbol">◐</span></div><div class="summary-value">22</div><div class="summary-note">高置信度</div></button>
+            <button class="summary-card" data-filter="rec709" type="button"><div class="summary-top"><span class="summary-label">普通 709</span><span class="summary-symbol">◍</span></div><div class="summary-value">24</div><div class="summary-note">含 3 个子目录</div></button>
+            <button class="summary-card" data-filter="rec2100_hlg" type="button"><div class="summary-top"><span class="summary-label">HLG HDR</span><span class="summary-symbol">◌</span></div><div class="summary-value">0</div><div class="summary-note">Rec.2100</div></button>
+            <button class="summary-card" data-filter="unknown" type="button"><div class="summary-top"><span class="summary-label">待确认</span><span class="summary-symbol">!</span></div><div class="summary-value">0</div><div class="summary-note">不会自动整理</div></button>
+          </section>
+
+          <div class="workspace-grid">
+            <section class="surface results-surface" aria-labelledby="resultsTitle">
+              <div class="section-heading">
+                <div><h2 class="section-title" id="resultsTitle">识别概览</h2><p class="section-helper">148 个视频已完成快速识别，7 个文件需要人工确认。</p></div>
+                <button class="heading-action" id="showAllDetails" type="button">查看全部明细 ↗</button>
+              </div>
+
+              <div class="filter-row">
+                <div class="filter-pills" aria-label="筛选识别结果">
+                  <button class="filter-pill active" data-filter="all" type="button">全部 <span>148</span></button>
+                  <button class="filter-pill" data-filter="dlog" type="button">D-Log <span>86</span></button>
+                  <button class="filter-pill" data-filter="dlog2" type="button">D-Log2 <span>22</span></button>
+                  <button class="filter-pill" data-filter="rec709" type="button">709 <span>24</span></button>
+                  <button class="filter-pill" data-filter="rec2100_hlg" type="button">HLG <span>0</span></button>
+                  <button class="filter-pill" data-filter="unknown" type="button">待确认 <span>0</span></button>
+                </div>
+                <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索文件名" /></label>
+              </div>
+
+              <div class="table-wrap">
+                <table class="result-table">
+                  <thead><tr><th>状态</th><th>文件名</th><th>色彩模式</th><th>所在文件夹</th><th>识别依据</th></tr></thead>
+                  <tbody id="resultBody"></tbody>
+                </table>
+              </div>
+              <div class="table-footer"><div id="tableCount">已加载 8 个演示文件 · <strong>向下滚动浏览明细</strong></div><div>扫描结果持续保留在当前工作台</div></div>
+            </section>
+
+            <aside class="surface plan-surface" aria-labelledby="planTitle">
+              <div class="plan-head">
+                <div class="plan-kicker"><span id="planKicker">下一步 · 整理预演</span><span class="safe-pill" id="safePill">不会修改原文件</span></div>
+                <h2 class="plan-title" id="planTitle">准备好整理 141 个文件</h2>
+                <p class="plan-copy" id="planCopy">待确认的 7 个文件会自动跳过，稍后可从明细中单独处理。</p>
+              </div>
+              <div class="plan-body">
+                <p class="plan-label">选择整理方式</p>
+                <div class="mode-options">
+                  <button class="mode-option selected" data-mode="copy" type="button"><span class="radio"></span><span><span class="mode-option-title">复制到分类文件夹</span><span class="mode-option-copy">保留原片，推荐首次使用</span></span><span class="mode-option-count">141</span></button>
+                  <button class="mode-option" data-mode="move" type="button"><span class="radio"></span><span><span class="mode-option-title">移动到分类文件夹</span><span class="mode-option-copy">整理原目录结构</span></span><span class="mode-option-count">141</span></button>
+                  <button class="mode-option" data-mode="prefix" type="button"><span class="radio"></span><span><span class="mode-option-title">添加文件名前缀</span><span class="mode-option-copy">处理 D-Log / D-Log2 / HLG HDR</span></span><span class="mode-option-count">0</span></button>
+                </div>
+
+                <div class="plan-preview">
+                  <div class="preview-row"><span class="preview-label">目标结构</span><strong class="preview-value" id="targetValue">dlog / dlog2 / rec709 / hlg</strong></div>
+                  <div class="preview-row"><span class="preview-label">冲突处理</span><strong class="preview-value">自动追加序号</strong></div>
+                  <div class="preview-row"><span class="preview-label">本次预估</span><strong class="preview-value green" id="previewValue">141 个文件 · 86.4 GB</strong></div>
+                </div>
+
+                <div class="toggle-row"><div class="toggle-copy">同步处理伴随文件<small>.SRT · .LRF · .THM · .JPG · .XML</small></div><button class="toggle on" id="sidecarToggle" aria-label="同步处理伴随文件" type="button"></button></div>
+                <button class="button-primary plan-button" id="executePlan" type="button">执行整理 · 141 个文件</button>
+                <button class="export-button" id="exportReport" type="button">⇩ 导出识别报告（CSV / JSON）</button>
+                <div class="plan-note"><span class="plan-note-icon">ⓘ</span><span>程序会在执行前再次检查路径冲突，并自动生成可撤销的 manifest 操作记录。</span></div>
+              </div>
+            </aside>
+          </div>
+
+          <section class="activity" aria-label="最近活动">
+            <div class="surface activity-surface">
+              <div class="activity-main"><div class="activity-icon">◷</div><div><div class="activity-title" id="activityTitle">最近一次操作记录</div><div class="activity-subtitle" id="activitySubtitle">完成整理后会在这里显示 manifest 路径</div></div></div>
+              <div class="activity-side"><span class="activity-status">可撤销</span><button class="text-button" id="undoLast" type="button">查看记录 ↗</button></div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="drop-overlay" id="dropOverlay" aria-hidden="true"><div class="drop-card"><div><div class="drop-card-icon">▱</div><div class="drop-card-title">松开以扫描这个文件夹</div><p class="drop-card-copy">文件只会在本机读取，不会上传到任何服务器</p></div></div></div>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <aside class="settings-drawer" id="settingsDrawer" aria-label="设置" aria-hidden="true">
+      <div class="drawer-head"><div><h2 class="drawer-title">工作台设置</h2><p class="drawer-copy">调整识别范围与整理时的安全策略。</p></div><button class="close-button" id="closeSettings" aria-label="关闭设置" type="button">×</button></div>
+      <div class="setting-group"><div class="setting-title">扫描范围</div><div class="setting-row"><span>包含子文件夹<small>递归读取目录内的 MP4 / MOV 文件</small></span><button class="toggle on" data-setting-toggle="recursive" type="button"></button></div></div>
+      <div class="setting-group"><div class="setting-title">整理安全</div><div class="setting-row"><span>冲突处理</span><select id="conflictPolicy" class="setting-select"><option value="suffix" selected>自动追加序号</option><option value="skip">跳过冲突</option><option value="error">发现冲突即标记</option></select></div><div class="setting-row"><span>执行前二次确认<small>所有真实文件操作都会弹出确认</small></span><button class="toggle on" data-setting-toggle="confirm" type="button"></button></div></div>
+      <div class="setting-group"><div class="setting-title">默认模板</div><div class="setting-row"><span>分类目录模板</span><span class="select-like">内置分类映射</span></div><div class="setting-row"><span>伴随文件</span><span class="select-like">同步处理⌄</span></div></div>
+      <div class="drawer-footer">前端原型通过任务式 API 调用本地 Python 核心。所有路径验证、冲突检查、manifest 写入和撤销逻辑都应保留在服务端。</div>
+    </aside>
+
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <section class="modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-kicker">执行前最后确认</div>
+      <h2 class="modal-title" id="modalTitle">确认复制这些素材？</h2>
+      <p class="modal-copy" id="modalCopy">文件将复制到分类文件夹，原始视频不会被移动或删除。程序会生成 manifest，之后可以撤销本次操作。</p>
+      <div class="modal-summary"><div class="modal-stat"><strong id="modalFiles">141</strong><span id="modalFileLabel">待复制文件</span></div><div class="modal-stat"><strong id="modalSpace">86.4 GB</strong><span id="modalSpaceLabel">预计新增空间</span></div><div class="modal-stat"><strong id="modalSkipped">7</strong><span id="modalSkippedLabel">自动跳过</span></div></div>
+      <div class="modal-actions"><button class="button-secondary" id="cancelModal" type="button">返回检查</button><button class="button-primary" id="confirmExecute" type="button">确认执行</button></div>
+    </section>
+
+    <div class="toast" id="toast"><div>✓</div><div><strong id="toastTitle">已更新</strong><div class="toast-copy" id="toastCopy">工作台状态已更新。</div></div></div>
+
+    <script>
+      // 保留原型演示脚本作为设计快照；生产入口由下方 app.js 连接 Python bridge。
+      if (false) {
+      // 演示数据模拟 Python 核心返回的 JSON DTO，方便回看初始视觉稿。
+      const files = [
+        { name: "DJI_0842.MP4", mode: "dlog", label: "D-Log", folder: "A_CAM / 日落", evidence: "djmd · 高置信度", status: "ready" },
+        { name: "DJI_0843.MP4", mode: "dlog", label: "D-Log", folder: "A_CAM / 日落", evidence: "QuickTime 标签", status: "ready" },
+        { name: "DJI_0844.MP4", mode: "dlog2", label: "D-Log2", folder: "A_CAM / 山路", evidence: "djmd · 高置信度", status: "ready" },
+        { name: "DJI_0918.MOV", mode: "rec709", label: "普通 709", folder: "B_CAM / 航拍", evidence: "QuickTime 标签", status: "ready" },
+        { name: "DJI_0926.MP4", mode: "unknown", label: "无法确认", folder: "B_CAM / 航拍", evidence: "证据冲突", status: "review" },
+        { name: "DJI_0931.MP4", mode: "hlg", label: "Rec.2100 HLG", folder: "B_CAM / 航拍", evidence: "QuickTime 标签", status: "ready" },
+        { name: "DJI_0940.MP4", mode: "dlog", label: "D-Log", folder: "B_CAM / 山谷", evidence: "djmd · 高置信度", status: "ready" },
+        { name: "DJI_0952.MP4", mode: "dlog2", label: "D-Log2", folder: "B_CAM / 山谷", evidence: "djmd · 高置信度", status: "ready" },
+        { name: "DJI_0958.MP4", mode: "dlog", label: "D-Log", folder: "C_CAM / 湖面", evidence: "djmd · 高置信度", status: "ready" },
+        { name: "DJI_0961.MP4", mode: "rec709", label: "普通 709", folder: "C_CAM / 湖面", evidence: "QuickTime 标签", status: "ready" },
+        { name: "DJI_0970.MOV", mode: "hlg", label: "Rec.2100 HLG", folder: "C_CAM / 湖面", evidence: "QuickTime 标签", status: "ready" },
+        { name: "DJI_0983.MP4", mode: "unknown", label: "无法确认", folder: "C_CAM / 湖面", evidence: "证据冲突", status: "review" },
+      ];
+
+      const state = { filter: "all", mode: "copy", sidecar: true, executed: false };
+      const resultBody = document.querySelector("#resultBody");
+      const searchInput = document.querySelector("#searchInput");
+      const toast = document.querySelector("#toast");
+      let toastTimer;
+
+      const modeText = { copy: "复制", move: "移动", prefix: "添加前缀" };
+      const filterTotals = { all: 148, dlog: 86, dlog2: 22, rec709: 24, unknown: 7 };
+      const planModes = {
+        copy: {
+          action: "复制", count: 141, safety: "不会修改原文件", target: "dlog / dlog2 / rec709 / hlg", preview: "141 个文件 · 86.4 GB",
+          planCopy: "待确认的 7 个文件会自动跳过，稍后可从明细中单独处理。", modalTitle: "确认复制这些素材？",
+          modalCopy: "将复制 141 个视频到分类文件夹，原始文件保留不变。待确认的 7 个文件不参与本次整理，操作完成后会生成可撤销的 manifest。",
+          fileLabel: "待复制文件", space: "86.4 GB", spaceLabel: "预计新增空间", skipped: "7", skippedLabel: "自动跳过"
+        },
+        move: {
+          action: "移动", count: 141, safety: "会改变文件位置", target: "dlog / dlog2 / rec709 / hlg", preview: "141 个文件 · 不新增空间",
+          planCopy: "待确认的 7 个文件会自动跳过，移动后可通过 manifest 撤销。", modalTitle: "确认移动这些素材？",
+          modalCopy: "将把 141 个视频移动到分类文件夹，原始路径会发生变化。待确认的 7 个文件不参与本次整理，操作完成后会生成可撤销的 manifest。",
+          fileLabel: "待移动文件", space: "不新增", spaceLabel: "空间占用变化", skipped: "7", skippedLabel: "自动跳过"
+        },
+        prefix: {
+          action: "添加前缀", count: 108, safety: "只改文件名", target: "dlog_ / dlog2_ 前缀", preview: "108 个文件 · 不新增占用空间",
+          planCopy: "仅处理 D-Log / D-Log2，其他 40 个文件不会改动。", modalTitle: "确认添加文件名前缀？",
+          modalCopy: "将为 108 个 D-Log / D-Log2 文件添加前缀，不会移动视频，也不会新增占用空间。其他 40 个文件保持不变，操作完成后会生成可撤销的 manifest。",
+          fileLabel: "待改名文件", space: "不新增", spaceLabel: "预计新增空间", skipped: "40", skippedLabel: "不会处理"
+        }
+      };
+
+      // 根据整理方式更新计划摘要，避免复制、移动和改名共用同一套文案。
+      function updatePlanMode() {
+        const config = planModes[state.mode];
+        document.querySelector("#safePill").textContent = config.safety;
+        document.querySelector("#planKicker").textContent = state.mode === "prefix" ? "下一步 · 改名预演" : "下一步 · 整理预演";
+        document.querySelector("#planTitle").textContent = `准备好${config.action} ${config.count} 个文件`;
+        document.querySelector("#planCopy").textContent = config.planCopy;
+        document.querySelector("#targetValue").textContent = config.target;
+        document.querySelector("#previewValue").textContent = config.preview;
+        document.querySelector("#executePlan").textContent = `执行${config.action} · ${config.count} 个文件`;
+      }
+
+      // 根据当前筛选条件刷新表格，保持界面与任务状态同步。
+      function renderResults() {
+        const keyword = searchInput.value.trim().toLowerCase();
+        const visible = files.filter((file) => {
+          const matchFilter = state.filter === "all" || file.mode === state.filter;
+          const matchSearch = !keyword || file.name.toLowerCase().includes(keyword);
+          return matchFilter && matchSearch;
+        });
+        // 明细不分页，生产版可将此处替换为虚拟列表，继续保持滚动浏览体验。
+        resultBody.innerHTML = visible.map((file) => `
+          <tr>
+            <td><span class="status ${file.status}">${file.status === "review" ? "待确认" : "已识别"}</span></td>
+            <td title="${file.name}"><span class="file-name">${file.name}</span></td>
+            <td><span class="mode-dot ${file.mode}"></span>${file.label}</td>
+            <td title="${file.folder}">${file.folder}</td>
+            <td>${file.evidence}</td>
+          </tr>
+        `).join("");
+        if (!visible.length) {
+          resultBody.innerHTML = `<tr><td colspan="5" style="padding: 28px 12px; color: var(--muted); text-align: center;">没有匹配的文件</td></tr>`;
+        }
+        const total = filterTotals[state.filter] || visible.length;
+        const resultLabel = keyword ? `匹配 ${visible.length} 个演示文件` : `共 ${total} 个文件`;
+        document.querySelector("#tableCount").innerHTML = `显示 ${visible.length} 个演示文件 · ${resultLabel} · <strong>向下滚动浏览明细</strong>`;
+      }
+
+      function showToast(title, copy) {
+        document.querySelector("#toastTitle").textContent = title;
+        document.querySelector("#toastCopy").textContent = copy;
+        toast.classList.add("visible");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 3600);
+        console.info(`[原型日志] ${title}：${copy}`);
+      }
+
+      function setFilter(filter) {
+        state.filter = filter;
+        document.querySelectorAll(".filter-pill").forEach((element) => element.classList.toggle("active", element.dataset.filter === filter));
+        document.querySelectorAll(".summary-card").forEach((element) => element.classList.toggle("selected", element.dataset.filter === filter));
+        renderResults();
+      }
+
+      function openConfirm() {
+        if (state.executed) {
+          showToast("本轮整理已完成", "如需再次整理，请重新识别当前文件夹。");
+          return;
+        }
+        const config = planModes[state.mode];
+        updatePlanMode();
+        document.querySelector("#modalTitle").textContent = config.modalTitle;
+        document.querySelector("#modalCopy").textContent = config.modalCopy;
+        document.querySelector("#modalFiles").textContent = config.count;
+        document.querySelector("#modalFileLabel").textContent = config.fileLabel;
+        document.querySelector("#modalSpace").textContent = config.space;
+        document.querySelector("#modalSpaceLabel").textContent = config.spaceLabel;
+        document.querySelector("#modalSkipped").textContent = config.skipped;
+        document.querySelector("#modalSkippedLabel").textContent = config.skippedLabel;
+        document.querySelector("#confirmModal").classList.add("visible");
+        document.querySelector("#modalBackdrop").classList.add("visible");
+      }
+
+      function closeConfirm() {
+        document.querySelector("#confirmModal").classList.remove("visible");
+        document.querySelector("#modalBackdrop").classList.remove("visible");
+      }
+
+      function openSettings() {
+        document.querySelector("#settingsDrawer").classList.add("visible");
+        document.querySelector("#drawerBackdrop").classList.add("visible");
+        document.querySelector("#settingsDrawer").setAttribute("aria-hidden", "false");
+      }
+
+      function closeSettings() {
+        document.querySelector("#settingsDrawer").classList.remove("visible");
+        document.querySelector("#drawerBackdrop").classList.remove("visible");
+        document.querySelector("#settingsDrawer").setAttribute("aria-hidden", "true");
+      }
+
+      function simulateFolderChange() {
+        document.querySelector("#folderPath").textContent = "D:\\素材库\\2026-08-29_海边日出";
+        document.querySelector("#folderDetail").textContent = "包含子文件夹 · 正在重新识别…";
+        showToast("正在重新识别", "已提交 scan_task，识别完成后会更新结果概览。");
+        window.setTimeout(() => {
+          document.querySelector("#folderDetail").textContent = "包含子文件夹 · 刚刚识别完成";
+          showToast("识别完成", "发现 148 个视频，其中 7 个需要人工确认。");
+        }, 900);
+      }
+
+      document.querySelectorAll("[data-filter]").forEach((element) => element.addEventListener("click", () => setFilter(element.dataset.filter)));
+      searchInput.addEventListener("input", renderResults);
+      document.querySelector("#executePlan").addEventListener("click", openConfirm);
+      document.querySelector("#cancelModal").addEventListener("click", closeConfirm);
+      document.querySelector("#modalBackdrop").addEventListener("click", closeConfirm);
+      document.querySelector("#confirmExecute").addEventListener("click", () => {
+        state.executed = true;
+        closeConfirm();
+        const button = document.querySelector("#executePlan");
+        button.textContent = "✓ 整理已完成";
+        button.disabled = true;
+        document.querySelector("#folderDetail").textContent = "刚刚完成整理 · manifest 已保存";
+        const config = planModes[state.mode];
+        showToast("整理完成，记录已保存", `${config.count} 个文件已${config.action}，manifest 可用于撤销本次操作。`);
+      });
+
+      document.querySelectorAll(".mode-option").forEach((element) => element.addEventListener("click", () => {
+        state.mode = element.dataset.mode;
+        document.querySelectorAll(".mode-option").forEach((option) => option.classList.toggle("selected", option === element));
+        const target = document.querySelector("#targetValue");
+        const preview = document.querySelector("#previewValue");
+        const button = document.querySelector("#executePlan");
+        const config = planModes[state.mode];
+        target.textContent = config.target;
+        preview.textContent = config.preview;
+        button.textContent = `执行${config.action} · ${config.count} 个文件`;
+        document.querySelector("#planTitle").textContent = `准备好${config.action} ${config.count} 个文件`;
+        document.querySelector("#safePill").textContent = config.safety;
+        document.querySelector("#planKicker").textContent = state.mode === "prefix" ? "下一步 · 改名预演" : "下一步 · 整理预演";
+        document.querySelector("#planCopy").textContent = config.planCopy;
+        console.info(`[原型日志] 切换整理方式：${modeText[state.mode]}`);
+      }));
+
+      document.querySelector("#sidecarToggle").addEventListener("click", (event) => {
+        state.sidecar = !state.sidecar;
+        event.currentTarget.classList.toggle("on", state.sidecar);
+        showToast(state.sidecar ? "已启用伴随文件" : "已关闭伴随文件", state.sidecar ? "将同步处理 SRT、LRF、THM、JPG、XML 文件。" : "本次只处理视频文件本身。");
+      });
+
+      document.querySelector("#openSettings").addEventListener("click", openSettings);
+      document.querySelector("#closeSettings").addEventListener("click", closeSettings);
+      document.querySelector("#drawerBackdrop").addEventListener("click", closeSettings);
+      document.querySelector("#showLogs").addEventListener("click", () => showToast("运行日志", "INFO · scan_task 完成；等待用户确认整理计划。"));
+      document.querySelector("#exportReport").addEventListener("click", () => showToast("报告已准备", "原型已模拟导出 CSV / JSON 报告下载。"));
+      document.querySelector("#loadManifest").addEventListener("click", () => showToast("载入操作记录", "已载入最近一次 manifest，可预览撤销计划。"));
+      document.querySelector("#undoLast").addEventListener("click", () => showToast("操作记录", "manifest_20260827_1842.json · 96 个文件 · 可撤销"));
+      document.querySelector("#rescanFolder").addEventListener("click", simulateFolderChange);
+      document.querySelector("#changeFolder").addEventListener("click", simulateFolderChange);
+      document.querySelector("#chooseFolder").addEventListener("click", simulateFolderChange);
+      document.querySelector("#showAllDetails").addEventListener("click", () => showToast("文件明细", "已展开当前筛选结果；生产版会保留滚动明细视图。"));
+
+      document.querySelectorAll(".nav-item").forEach((item) => item.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach((nav) => nav.classList.toggle("active", nav === item));
+        if (item.dataset.nav !== "识别工作台") showToast(item.dataset.nav, "该入口已预留，当前原型聚焦识别与整理主流程。");
+      }));
+
+      // 拖拽目录只是原型反馈，实际接入时由 pywebview/Tauri 文件选择 API 提供路径。
+      const dropOverlay = document.querySelector("#dropOverlay");
+      document.addEventListener("dragover", (event) => { event.preventDefault(); dropOverlay.classList.add("visible"); });
+      document.addEventListener("dragleave", (event) => { if (event.clientX === 0 && event.clientY === 0) dropOverlay.classList.remove("visible"); });
+      document.addEventListener("drop", (event) => { event.preventDefault(); dropOverlay.classList.remove("visible"); simulateFolderChange(); });
+      document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeConfirm(); closeSettings(); dropOverlay.classList.remove("visible"); } });
+
+      updatePlanMode();
+      renderResults();
+      console.info("[原型日志] DJI Color Desk 原型快照。");
+      }
+    </script>
+    <script src="app.js"></script>
+  </body>
+</html>

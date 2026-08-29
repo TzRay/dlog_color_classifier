@@ -18,6 +18,9 @@ dji_color_modes.csv
 acceptance_*.csv
 acceptance_*.json
 
+# 本地元数据分析产物，可能包含用户素材路径，不随源码发布。
+scan_reports/
+
 # 独立的 DJI 元数据移植项目及其本地输出，不属于当前色彩分类器仓库。
 dji_metadata_transplant_tool/
 metadata_transplant_outputs/

@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
+from threading import Event
 
 from dji_color_classifier.core.models import ExecutionRecord, PlanAction, PlanItem
 
 
-def execute_plan(plan: list[PlanItem], *, apply: bool = False) -> list[ExecutionRecord]:
-    """执行或预演整理计划。"""
+def execute_plan(
+    plan: list[PlanItem],
+    *,
+    apply: bool = False,
+    on_progress: Callable[[int, int, PlanItem], None] | None = None,
+    cancel_event: Event | None = None,
+) -> list[ExecutionRecord]:
+    """执行或预演整理计划。
+
+    执行仍然逐项捕获异常；新增的进度回调和取消事件仅用于长任务外壳，
+    不影响原有的安全策略和返回记录结构。
+    """
 
     records: list[ExecutionRecord] = []
-    for item in plan:
+    total = len(plan)
+    for completed, item in enumerate(plan, start=1):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         if item.skipped or item.action is PlanAction.NONE or item.target is None:
             records.append(
                 ExecutionRecord(
@@ -23,6 +38,8 @@ def execute_plan(plan: list[PlanItem], *, apply: bool = False) -> list[Execution
                     message=item.reason or "无需处理",
                 )
             )
+            if on_progress is not None:
+                on_progress(completed, total, item)
             continue
 
         if not apply:
@@ -36,9 +53,13 @@ def execute_plan(plan: list[PlanItem], *, apply: bool = False) -> list[Execution
                     message="预演模式，未修改文件",
                 )
             )
+            if on_progress is not None:
+                on_progress(completed, total, item)
             continue
 
         records.append(_execute_item(item))
+        if on_progress is not None:
+            on_progress(completed, total, item)
     return records
 
 
