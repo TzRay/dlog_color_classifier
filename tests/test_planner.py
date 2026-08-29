@@ -42,6 +42,38 @@ def test_move_uses_mode_directories(tmp_path: Path) -> None:
     assert plan[0].target == tmp_path / "dlog2" / "DJI_0001.MP4"
 
 
+def test_move_uses_hlg_directory_without_adding_prefix(tmp_path: Path) -> None:
+    """HLG 应归入独立目录，前缀模式仍只处理两种 Log。"""
+
+    source = tmp_path / "DJI_0001.MP4"
+    source.write_bytes(b"")
+    hlg_result = result(source, ColorMode.REC2100_HLG)
+
+    move_plan = build_plan([hlg_result], root=tmp_path, mode="move")
+    prefix_plan = build_plan([hlg_result], root=tmp_path, mode="prefix")
+
+    assert move_plan[0].target == tmp_path / "hlg" / "DJI_0001.MP4"
+    assert prefix_plan[0].skipped
+
+
+def test_conflicting_metadata_is_not_automatically_organized(tmp_path: Path) -> None:
+    """存在可靠元数据冲突时，移动和复制都必须跳过该文件。"""
+
+    source = tmp_path / "DJI_0001.MP4"
+    source.write_bytes(b"")
+    conflict_result = ScanResult(
+        source,
+        ColorMode.UNKNOWN,
+        ClassificationEvidence(None, None, primary_source="conflict"),
+    )
+
+    plan = build_plan([conflict_result], root=tmp_path, mode="copy")
+
+    assert plan[0].skipped
+    assert plan[0].target is None
+    assert plan[0].reason == "元数据证据冲突，禁止自动整理"
+
+
 def test_rejects_name_template_that_creates_a_path(tmp_path: Path) -> None:
     """文件名模板不得越权生成子目录。"""
 

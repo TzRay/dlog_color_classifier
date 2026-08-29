@@ -18,6 +18,7 @@ class ColorMode(str, Enum):
     DLOG = "dlog"
     DLOG2 = "dlog2"
     REC709 = "rec709"
+    REC2100_HLG = "rec2100_hlg"
     UNKNOWN = "unknown"
     ERROR = "error"
 
@@ -29,6 +30,7 @@ class ColorMode(str, Enum):
             ColorMode.DLOG: "D-Log",
             ColorMode.DLOG2: "D-Log2",
             ColorMode.REC709: "普通709",
+            ColorMode.REC2100_HLG: "Rec.2100 HLG（HDR）",
             ColorMode.UNKNOWN: "无法确认",
             ColorMode.ERROR: "识别失败",
         }[self]
@@ -60,6 +62,10 @@ class ClassificationEvidence:
     record_mode: int | None
     reader: str = "native"
     detail: str = ""
+    metadata_label: str | None = None
+    primary_source: str = "unknown"
+    confidence: str = "unknown"
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

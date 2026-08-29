@@ -14,9 +14,11 @@ def _load_pyside6() -> bool:
     """尝试加载 PySide6。"""
 
     global QT_BINDING
-    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject, QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
+    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject
+    global QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
     global QAction, QColor, QFont
-    global QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
+    global QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog
+    global QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
     global QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit
     global QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStackedWidget, QStyle, QTableView
     global QToolButton, QVBoxLayout, QWidget
@@ -36,6 +38,7 @@ def _load_pyside6() -> bool:
     from PySide6.QtGui import QAction, QColor, QFont
     from PySide6.QtWidgets import (
         QApplication,
+        QButtonGroup,
         QCheckBox,
         QComboBox,
         QFileDialog,
@@ -70,9 +73,11 @@ def _load_pyqt5() -> bool:
     """尝试加载 PyQt5。"""
 
     global QT_BINDING
-    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject, QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
+    global QAbstractTableModel, QEasingCurve, QModelIndex, QObject
+    global QPropertyAnimation, QRunnable, Qt, QThreadPool, Signal, Slot
     global QAction, QColor, QFont
-    global QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
+    global QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog
+    global QFrame, QGraphicsOpacityEffect, QGridLayout, QGroupBox
     global QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit
     global QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStackedWidget, QStyle, QTableView
     global QToolButton, QVBoxLayout, QWidget
@@ -93,6 +98,7 @@ def _load_pyqt5() -> bool:
     from PyQt5.QtWidgets import (
         QAction,
         QApplication,
+        QButtonGroup,
         QCheckBox,
         QComboBox,
         QFileDialog,
@@ -159,6 +165,12 @@ def foreground_role() -> int:
     """返回前景色角色。"""
 
     return _enum(Qt, "ItemDataRole", "ForegroundRole")
+
+
+def tooltip_role() -> int:
+    """返回悬浮提示角色。"""
+
+    return _enum(Qt, "ItemDataRole", "ToolTipRole")
 
 
 def horizontal_orientation() -> int:

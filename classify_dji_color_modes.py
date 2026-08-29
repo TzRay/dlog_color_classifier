@@ -24,6 +24,9 @@ def classify_file(video_path: Path) -> dict[str, str | int | None]:
         "判定": result.mode.label,
         "ColorGammaSxS枚举": result.evidence.color_gamma_sxs,
         "记录模式字段": result.evidence.record_mode,
+        "QuickTime色彩标签": result.evidence.metadata_label,
+        "主证据来源": result.evidence.primary_source,
+        "置信度": result.evidence.confidence,
         "证据": result.evidence.detail,
     }
 

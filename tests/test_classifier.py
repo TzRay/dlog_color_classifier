@@ -66,3 +66,13 @@ def test_classifies_rec709() -> None:
     mode, evidence = classify_djmd_packet(record_mode_packet(8))
     assert mode is ColorMode.REC709
     assert evidence.record_mode == 8
+
+
+def test_conflicting_explicit_label_and_djmd_enum_returns_unknown() -> None:
+    """明确文本标签与已映射 djmd 枚举冲突时，不得静默选择其中之一。"""
+
+    mode, evidence = classify_djmd_packet(color_gamma_packet(2), metadata_label="D-Log2")
+
+    assert mode is ColorMode.UNKNOWN
+    assert evidence.primary_source == "conflict"
+    assert evidence.warnings

@@ -1,6 +1,7 @@
-"""原生 MP4/MOV `djmd` 读取器。
+"""原生 MP4/MOV 元数据读取器。
 
-本模块只实现读取 DJI 元数据轨第一包所需的 ISO BMFF 子集，不做视频解码。
+本模块只实现读取 DJI ``djmd`` 第一包和 QuickTime ``mdta`` 标签所需的
+ISO BMFF 子集，不做视频解码，也不扫描压缩码流。
 """
 
 from __future__ import annotations
@@ -50,7 +51,14 @@ CONTAINER_BOXES = {
     "stbl",
     "edts",
     "dinf",
+    "udta",
+    "meta",
 }
+
+# 大多数 ISO BMFF ``meta`` 是 FullBox，但部分 DJI 文件遵循 QuickTime 写法，
+# 直接以子 box 开始。解析时需根据首个子 box 的合法性判断，不能固定跳过 4 字节。
+# DJI 写入 QuickTime 元数据时使用的标准键名。
+DJI_COLOR_GAMMA_KEY = "com.dji.camera.ColorGammaSxS"
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,42 @@ def read_first_djmd_packet(video_path: Path) -> bytes:
     raise Mp4ReaderError("未找到 DJI djmd 数据轨")
 
 
+def read_quicktime_metadata(video_path: Path) -> dict[str, str]:
+    """读取 QuickTime ``mdta`` 键值对。
+
+    仅解析 ``moov/meta`` 或 ``moov/udta/meta`` 中的 ``keys`` 与 ``ilst``，
+    不读取 ``mdat``。没有该元数据时返回空字典；容器或元数据结构损坏时抛出
+    :class:`Mp4ReaderError`，让调用方保留诊断信息。
+    """
+
+    with video_path.open("rb") as handle:
+        file_size = video_path.stat().st_size
+        top_boxes = _parse_children(handle, 0, file_size)
+        moov = _find_box(top_boxes, ("moov",))
+        if moov is None:
+            raise Mp4ReaderError("未找到 moov box，无法读取 QuickTime 元数据")
+
+        meta = _find_box([moov], ("moov", "meta")) or _find_box([moov], ("moov", "udta", "meta"))
+        if meta is None:
+            return {}
+
+        keys_box = _find_direct_child(meta, "keys")
+        ilst_box = _find_direct_child(meta, "ilst")
+        if keys_box is None or ilst_box is None:
+            return {}
+
+        keys = _read_mdta_keys(handle, keys_box)
+        if not keys:
+            return {}
+        return _read_mdta_values(handle, ilst_box, keys)
+
+
+def read_dji_color_gamma_label(video_path: Path) -> str | None:
+    """读取 DJI ``ColorGammaSxS`` 文本标签；标签不存在时返回 ``None``。"""
+
+    return read_quicktime_metadata(video_path).get(DJI_COLOR_GAMMA_KEY)
+
+
 def _parse_children(handle: BinaryIO, start: int, end: int) -> list[Box]:
     """解析指定范围内的子 box。"""
 
@@ -104,7 +148,10 @@ def _parse_children(handle: BinaryIO, start: int, end: int) -> list[Box]:
 
         children: list[Box] = []
         if box.type in CONTAINER_BOXES:
-            children = _parse_children(handle, box.payload_start, box.end)
+            child_start = _container_children_start(handle, box)
+            if child_start > box.end:
+                raise Mp4ReaderError(f"容器 box 数据过短：{box.type} at {box.start}")
+            children = _parse_children(handle, child_start, box.end)
         boxes.append(Box(box.type, box.start, box.size, box.header_size, children))
 
         if box.size == 0:
@@ -137,6 +184,98 @@ def _read_box_header(handle: BinaryIO, offset: int, parent_end: int) -> Box:
         size = size32
 
     return Box(box_type, offset, size, header_size)
+
+
+def _container_children_start(handle: BinaryIO, box: Box) -> int:
+    """返回容器子 box 的实际起点，兼容两种 ``meta`` 写法。"""
+
+    if box.type != "meta":
+        return box.payload_start
+
+    handle.seek(box.payload_start)
+    header = handle.read(8)
+    if len(header) < 8:
+        raise Mp4ReaderError("meta box 数据过短")
+    direct_size = struct.unpack_from(">I", header)[0]
+    remaining = box.end - box.payload_start
+    if 8 <= direct_size <= remaining:
+        return box.payload_start
+    return box.payload_start + 4
+
+
+def _read_mdta_keys(handle: BinaryIO, box: Box) -> dict[int, str]:
+    """读取 ``keys`` box，建立一基索引到键名的映射。"""
+
+    handle.seek(box.payload_start)
+    payload = handle.read(box.size - box.header_size)
+    if len(payload) < 8:
+        raise Mp4ReaderError("QuickTime keys 数据过短")
+
+    entry_count = struct.unpack_from(">I", payload, 4)[0]
+    offset = 8
+    keys: dict[int, str] = {}
+    for index in range(1, entry_count + 1):
+        if offset + 8 > len(payload):
+            raise Mp4ReaderError("QuickTime keys 条目不完整")
+        entry_size = struct.unpack_from(">I", payload, offset)[0]
+        if entry_size < 8 or offset + entry_size > len(payload):
+            raise Mp4ReaderError("QuickTime keys 条目大小无效")
+
+        # 4 字节 namespace 后是 UTF-8 键名；未知 namespace 仍保留键名，方便兼容。
+        key_raw = payload[offset + 8 : offset + entry_size]
+        try:
+            key = key_raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise Mp4ReaderError("QuickTime keys 包含非 UTF-8 键名") from exc
+        keys[index] = key
+        offset += entry_size
+    return keys
+
+
+def _read_mdta_values(handle: BinaryIO, ilst_box: Box, keys: dict[int, str]) -> dict[str, str]:
+    """读取 ``ilst`` 内与 ``keys`` 索引对应的文本 ``data`` 值。"""
+
+    values: dict[str, str] = {}
+    for item in _parse_children(handle, ilst_box.payload_start, ilst_box.end):
+        key_index = int.from_bytes(item.type.encode("latin1"), "big")
+        key = keys.get(key_index)
+        if key is None:
+            continue
+
+        data_box = _find_direct_child_from_range(handle, item.payload_start, item.end, "data")
+        if data_box is None:
+            continue
+        value = _read_mdta_text_value(handle, data_box)
+        if value is not None:
+            values[key] = value
+    return values
+
+
+def _find_direct_child_from_range(handle: BinaryIO, start: int, end: int, box_type: str) -> Box | None:
+    """在未预先展开的 box 范围内查找直接子 box。"""
+
+    for child in _parse_children(handle, start, end):
+        if child.type == box_type:
+            return child
+    return None
+
+
+def _read_mdta_text_value(handle: BinaryIO, box: Box) -> str | None:
+    """读取 QuickTime ``data`` box 的 UTF-8 文本 payload。"""
+
+    handle.seek(box.payload_start)
+    payload = handle.read(box.size - box.header_size)
+    # data 为 FullBox，后续 4 字节为 locale；两者均不是实际文本。
+    if len(payload) < 8:
+        raise Mp4ReaderError("QuickTime data 数据过短")
+    value_raw = payload[8:].rstrip(b"\x00")
+    if not value_raw:
+        return ""
+    try:
+        return value_raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # 非文本 data（例如封面或整数）与色彩标签无关，跳过即可。
+        return None
 
 
 def _read_sample_table(handle: BinaryIO, trak: Box) -> SampleTable | None:

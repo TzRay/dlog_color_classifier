@@ -1,4 +1,4 @@
-"""三步式 DJI 色彩模式识别与整理主窗口。"""
+"""轻量单页式 DJI 色彩模式识别与整理主窗口。"""
 
 from __future__ import annotations
 
@@ -15,13 +15,12 @@ from dji_color_classifier.gui.table_model import ResultTableModelMixin
 from dji_color_classifier.gui.qt_compat import (
     QApplication,
     QAbstractTableModel,
-    QAction,
+    QButtonGroup,
     QCheckBox,
     QColor,
     QComboBox,
     QFileDialog,
     QFrame,
-    QGraphicsOpacityEffect,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -33,10 +32,8 @@ from dji_color_classifier.gui.qt_compat import (
     QObject,
     QPlainTextEdit,
     QProgressBar,
-    QPropertyAnimation,
     QPushButton,
     QRunnable,
-    QStackedWidget,
     QTableView,
     QThreadPool,
     QVBoxLayout,
@@ -44,11 +41,10 @@ from dji_color_classifier.gui.qt_compat import (
     Signal,
     Slot,
     display_role,
-    easing_out_cubic,
     foreground_role,
     horizontal_orientation,
     interactive_resize,
-    standard_pixmap,
+    tooltip_role,
     yes_button,
 )
 
@@ -88,7 +84,7 @@ class ScanWorker(QRunnable):
             results = scan_directory(self.directory, recursive=self.recursive)
             self.signals.finished.emit((self.token, self.directory, results))
         except Exception as exc:
-            self.signals.failed.emit((self.token, str(exc)))
+            self.signals.failed.emit(("scan", self.token, str(exc)))
 
 
 class ExecutionWorker(QRunnable):
@@ -109,7 +105,7 @@ class ExecutionWorker(QRunnable):
         try:
             records = execute_plan(self.plan, apply=True)
         except Exception as exc:
-            self.signals.failed.emit((self.token, str(exc)))
+            self.signals.failed.emit(("execution", self.token, str(exc)))
             return
 
         manifest_path: Path | None = None
@@ -142,11 +138,15 @@ class ResultTableModel(ResultTableModelMixin, QAbstractTableModel):
         record = self.execution_records[index.row()] if index.row() < len(self.execution_records) else None
 
         if role == foreground_role():
+            if item and item.skipped:
+                return QColor("#b46a00")
             if record:
                 return QColor("#278a49" if record.success else "#b42318")
-            if result.error or result.mode.value in {"unknown", "error"} or (item and item.skipped):
-                return QColor("#b46a00" if item and item.skipped else "#b42318")
+            if result.error or result.mode.value in {"unknown", "error"}:
+                return QColor("#b42318")
             return None
+        if role == tooltip_role() and index.column() in {1, 3}:
+            return str(result.path)
         if role != display_role():
             return None
 
@@ -156,14 +156,17 @@ class ResultTableModel(ResultTableModelMixin, QAbstractTableModel):
         if item:
             status = "跳过" if item.skipped else "待执行"
             note = item.reason or note
-        if record:
+        if record and item and item.skipped:
+            status = "跳过"
+            note = item.reason or record.message
+        elif record:
             status = "成功" if record.success else "失败"
             note = record.message
         values = [
             status,
             result.path.name,
             result.mode.label,
-            str(result.path),
+            result.path.parent.name or str(result.path.parent),
             str(item.target) if item and item.target else "",
             result.evidence.detail,
             note,
@@ -179,316 +182,400 @@ class ResultTableModel(ResultTableModelMixin, QAbstractTableModel):
 
 
 class MainWindow(QMainWindow):
-    """面向普通用户的三步式主窗口。"""
+    """面向普通用户的轻量单页主窗口。"""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("DJI 视频色彩模式识别与整理")
-        self.resize(1360, 860)
-        self.setMinimumSize(1080, 700)
+        self.resize(1120, 780)
+        self.setMinimumSize(900, 660)
 
         self.thread_pool = QThreadPool.globalInstance()
         self.results: list[ScanResult] = []
         self.plan: list[PlanItem] = []
         self._scan_token = 0
         self._execution_token = 0
-        self._active_workers: dict[int, QRunnable] = {}
+        self._active_workers: dict[tuple[str, int], QRunnable] = {}
         self._busy = False
+        self._busy_kind: str | None = None
         self._undo_mode = False
-        self._page_animation: QPropertyAnimation | None = None
+        self._scan_root: Path | None = None
+        self._scan_recursive = True
+        self._operation_root: Path | None = None
+        self._execution_completed = False
         self._build_ui()
         self._apply_style()
-        self._set_step(1)
+        self._reset_interface()
 
     def _build_ui(self) -> None:
-        """构建侧栏、步骤条、结果页和整理页。"""
-
-        history_action = QAction("从操作记录撤销…", self)
-        history_action.triggered.connect(self.undo_from_manifest)
-        self.menuBar().addAction(history_action)
+        """构建居中的单页工作区。"""
 
         root = QWidget()
+        root.setObjectName("appBackground")
         root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setContentsMargins(24, 10, 24, 12)
         root_layout.setSpacing(0)
-        root_layout.addWidget(self._build_sidebar())
+        root_layout.addStretch(1)
 
-        content = QWidget()
+        content = QFrame()
         content.setObjectName("content")
+        content.setMaximumWidth(1080)
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(28, 24, 28, 20)
-        content_layout.setSpacing(16)
-        content_layout.addWidget(self._build_stepper())
-
-        self.pages = QStackedWidget()
-        self.pages.addWidget(self._build_results_page())
-        self.pages.addWidget(self._build_organize_page())
-        content_layout.addWidget(self.pages, 1)
-        root_layout.addWidget(content, 1)
+        content_layout.setContentsMargins(20, 14, 20, 14)
+        content_layout.setSpacing(14)
+        content_layout.addWidget(self._build_header())
+        content_layout.addWidget(self._build_results_page(), 1)
+        root_layout.addWidget(content, 10)
+        root_layout.addStretch(1)
         self.setCentralWidget(root)
         self.setAcceptDrops(True)
 
-    def _build_sidebar(self) -> QWidget:
-        """构建任务摘要侧栏。"""
+    def _build_header(self) -> QWidget:
+        """构建简洁标题和低频操作入口。"""
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(288)
-        layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(22, 26, 22, 22)
-        layout.setSpacing(10)
+        header = QWidget()
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
-        title = QLabel("当前任务")
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
-        self.folder_label = QLabel("尚未选择视频文件夹")
-        self.folder_label.setObjectName("folderName")
-        self.folder_label.setWordWrap(True)
-        layout.addWidget(self.folder_label)
-        self.scan_state_label = QLabel("等待开始")
-        self.scan_state_label.setObjectName("mutedText")
-        layout.addWidget(self.scan_state_label)
-        layout.addSpacing(16)
+        brand = QLabel("D")
+        brand.setObjectName("brandMark")
+        brand.setAlignment(self._align_center())
+        brand.setFixedSize(44, 44)
+        layout.addWidget(brand)
 
-        info_title = QLabel("扫描信息")
-        info_title.setObjectName("sectionTitle")
-        layout.addWidget(info_title)
-        self.fact_labels: dict[str, QLabel] = {}
-        for key, label in (("files", "视频文件"), ("modes", "识别结果"), ("scope", "扫描范围")):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(label))
-            value = QLabel("—")
-            value.setObjectName("factValue")
-            row.addStretch(1)
-            row.addWidget(value)
-            self.fact_labels[key] = value
-            layout.addLayout(row)
-        layout.addSpacing(14)
-
-        self.choose_button = QPushButton("选择视频文件夹")
-        self.choose_button.setIcon(self.style().standardIcon(standard_pixmap("SP_DirOpenIcon")))
-        self.choose_button.clicked.connect(self.choose_directory)
-        layout.addWidget(self.choose_button)
-        self.rescan_button = QPushButton("重新扫描")
-        self.rescan_button.setIcon(self.style().standardIcon(standard_pixmap("SP_BrowserReload")))
-        self.rescan_button.clicked.connect(self.start_scan)
-        layout.addWidget(self.rescan_button)
+        title_column = QVBoxLayout()
+        title_column.setSpacing(2)
+        title = QLabel("DJI 视频色彩识别")
+        title.setObjectName("appTitle")
+        title_column.addWidget(title)
+        subtitle = QLabel("选择文件夹，快速识别 D-Log、D-Log2、Rec.709 与 HLG HDR")
+        subtitle.setObjectName("mutedText")
+        title_column.addWidget(subtitle)
+        layout.addLayout(title_column)
         layout.addStretch(1)
 
-        self.advanced_button = QPushButton("高级设置")
+        self.advanced_button = QPushButton("设置")
+        self.advanced_button.setObjectName("quietButton")
         self.advanced_button.clicked.connect(self._toggle_advanced)
         layout.addWidget(self.advanced_button)
-        self.log_button = QPushButton("查看运行日志")
-        self.log_button.clicked.connect(self._toggle_log)
-        layout.addWidget(self.log_button)
-        return sidebar
-
-    def _build_stepper(self) -> QWidget:
-        """构建顶部三步流程指示器。"""
-
-        stepper = QFrame()
-        stepper.setObjectName("stepper")
-        layout = QHBoxLayout(stepper)
-        layout.setContentsMargins(18, 4, 18, 4)
-        self.step_labels: list[QLabel] = []
-        for index, (title, hint) in enumerate(
-            (("选择视频", "选择 DJI 视频文件夹"), ("检查识别结果", "确认识别是否正确"), ("整理文件", "确认后立即执行")),
-            start=1,
-        ):
-            label = QLabel(f"{index}   {title}\n      {hint}")
-            label.setObjectName("workflowStep")
-            self.step_labels.append(label)
-            layout.addWidget(label, 1)
-        return stepper
+        self.undo_button = QPushButton("操作记录")
+        self.undo_button.setObjectName("quietButton")
+        self.undo_button.clicked.connect(self.undo_from_manifest)
+        layout.addWidget(self.undo_button)
+        return header
 
     def _build_results_page(self) -> QWidget:
-        """构建扫描与识别结果页。"""
+        """构建选择、识别和整理均在同一屏完成的主页面。"""
 
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
+
+        folder_card = QFrame()
+        folder_card.setObjectName("card")
+        folder_card.setMaximumHeight(210)
+        folder_layout = QVBoxLayout(folder_card)
+        folder_layout.setContentsMargins(18, 14, 18, 14)
+        folder_layout.setSpacing(8)
+
+        folder_header = QHBoxLayout()
+        folder_title_column = QVBoxLayout()
+        folder_title_column.setSpacing(2)
+        folder_title = QLabel("选择 DJI 视频文件夹")
+        folder_title.setObjectName("sectionTitle")
+        folder_title_column.addWidget(folder_title)
+        self.folder_label = QLabel("拖入文件夹，或点击右侧按钮；选择后会立即识别")
+        self.folder_label.setObjectName("mutedText")
+        self.folder_label.setWordWrap(True)
+        folder_title_column.addWidget(self.folder_label)
+        folder_header.addLayout(folder_title_column, 1)
+        self.choose_button = QPushButton("选择文件夹")
+        self.choose_button.setObjectName("selectButton")
+        self.choose_button.clicked.connect(self.choose_directory)
+        folder_header.addWidget(self.choose_button)
+        folder_layout.addLayout(folder_header)
 
         path_row = QHBoxLayout()
+        path_row.setSpacing(8)
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("选择或拖入 DJI 视频目录")
+        self.path_edit.setAccessibleName("DJI 视频文件夹路径")
+        self.path_edit.setPlaceholderText("也可以粘贴文件夹路径后按 Enter")
         self.path_edit.textChanged.connect(self._on_path_changed)
+        self.path_edit.returnPressed.connect(self.start_scan)
         path_row.addWidget(self.path_edit, 1)
-        self.recursive_check = QCheckBox("包含子文件夹")
-        self.recursive_check.setChecked(True)
-        path_row.addWidget(self.recursive_check)
-        self.scan_button = QPushButton("开始扫描")
-        self.scan_button.setObjectName("primaryButton")
-        self.scan_button.clicked.connect(self.start_scan)
-        path_row.addWidget(self.scan_button)
-        layout.addLayout(path_row)
+        self.rescan_button = QPushButton("重新识别")
+        self.rescan_button.setObjectName("quietButton")
+        self.rescan_button.clicked.connect(self.start_scan)
+        path_row.addWidget(self.rescan_button)
+        folder_layout.addLayout(path_row)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
         self.progress.setTextVisible(False)
-        layout.addWidget(self.progress)
-        layout.addWidget(self._build_summary())
+        folder_layout.addWidget(self.progress)
+        self.scan_state_label = QLabel("等待选择文件夹")
+        self.scan_state_label.setObjectName("statusText")
+        folder_layout.addWidget(self.scan_state_label)
+        self.empty_label = QLabel("识别速度很快，无需预先配置任何选项")
+        self.empty_label.setObjectName("emptyState")
+        self.empty_label.setAlignment(self._align_center())
+        self.empty_label.setFixedHeight(52)
+        folder_layout.addWidget(self.empty_label)
+        layout.addWidget(folder_card)
 
+        self.results_panel = QFrame()
+        self.results_panel.setObjectName("resultsPanel")
+        results_layout = QVBoxLayout(self.results_panel)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(10)
+
+        result_header = QHBoxLayout()
+        result_title_column = QVBoxLayout()
+        result_title_column.setSpacing(2)
+        result_title = QLabel("识别完成")
+        result_title.setObjectName("resultTitle")
+        result_title_column.addWidget(result_title)
+        self.selection_label = QLabel("尚无识别结果")
+        self.selection_label.setObjectName("mutedText")
+        result_title_column.addWidget(self.selection_label)
+        result_header.addLayout(result_title_column)
+        result_header.addStretch(1)
+        self.export_button = QPushButton("导出报告")
+        self.export_button.setObjectName("quietButton")
+        self.export_button.clicked.connect(self.export_report)
+        result_header.addWidget(self.export_button)
+        self.details_button = QPushButton("查看文件明细")
+        self.details_button.setObjectName("quietButton")
+        self.details_button.clicked.connect(self._toggle_details)
+        result_header.addWidget(self.details_button)
+        results_layout.addLayout(result_header)
+        results_layout.addWidget(self._build_summary())
+
+        self.attention_label = QLabel()
+        self.attention_label.setObjectName("warningBanner")
+        self.attention_label.setWordWrap(True)
+        self.attention_label.setVisible(False)
+        results_layout.addWidget(self.attention_label)
+        self.organize_card = self._build_organize_card()
+        self.organize_card.setMaximumHeight(240)
+        results_layout.addWidget(self.organize_card)
+
+        self.details_panel = QFrame()
+        self.details_panel.setObjectName("card")
+        details_layout = QVBoxLayout(self.details_panel)
+        details_layout.setContentsMargins(16, 14, 16, 16)
+        details_layout.setSpacing(10)
         filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
         self.status_filter = QComboBox()
+        self.status_filter.setAccessibleName("识别状态筛选")
         self.status_filter.addItem("全部状态", "all")
         self.status_filter.addItem("已识别", "ready")
         self.status_filter.addItem("需要检查", "attention")
         self.status_filter.currentIndexChanged.connect(self._apply_filters)
         filter_row.addWidget(self.status_filter)
         self.mode_filter = QComboBox()
+        self.mode_filter.setAccessibleName("色彩模式筛选")
         self.mode_filter.addItem("全部色彩模式", "all")
-        for text, value in (("D-Log", "dlog"), ("D-Log2", "dlog2"), ("普通709", "rec709"), ("无法确认", "unknown")):
+        for text, value in (
+            ("D-Log", "dlog"),
+            ("D-Log2", "dlog2"),
+            ("普通709", "rec709"),
+            ("Rec.2100 HLG（HDR）", "rec2100_hlg"),
+            ("无法确认", "unknown"),
+        ):
             self.mode_filter.addItem(text, value)
         self.mode_filter.currentIndexChanged.connect(self._apply_filters)
         filter_row.addWidget(self.mode_filter)
         self.search_edit = QLineEdit()
+        self.search_edit.setAccessibleName("搜索视频文件")
         self.search_edit.setPlaceholderText("搜索文件名或路径")
         self.search_edit.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.search_edit, 1)
-        self.export_button = QPushButton("导出识别报告")
-        self.export_button.clicked.connect(self.export_report)
-        filter_row.addWidget(self.export_button)
-        layout.addLayout(filter_row)
+        details_layout.addLayout(filter_row)
 
         self.model = ResultTableModel()
         self.table = QTableView()
+        self.table.setAccessibleName("视频识别结果")
         self.table.setModel(self.model)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows if hasattr(QTableView, "SelectionBehavior") else QTableView.SelectRows)
+        self.table.setSelectionBehavior(
+            QTableView.SelectionBehavior.SelectRows
+            if hasattr(QTableView, "SelectionBehavior")
+            else QTableView.SelectRows
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(interactive_resize())
-        self.table.setColumnWidth(0, 92)
-        self.table.setColumnWidth(1, 260)
+        self.table.setColumnWidth(0, 90)
+        self.table.setColumnWidth(1, 300)
         self.table.setColumnWidth(2, 110)
-        self.table.setColumnWidth(3, 300)
-        self.table.setColumnWidth(4, 300)
-        self.table.setColumnWidth(5, 220)
-        layout.addWidget(self.table, 1)
-
-        self.empty_label = QLabel("选择一个包含 DJI 视频的文件夹，然后开始扫描。")
-        self.empty_label.setObjectName("emptyState")
-        self.empty_label.setAlignment(self._align_center())
-        layout.addWidget(self.empty_label)
-
-        action_row = QHBoxLayout()
-        self.selection_label = QLabel("尚无识别结果")
-        action_row.addWidget(self.selection_label)
-        action_row.addStretch(1)
-        self.next_button = QPushButton("下一步：选择整理方式")
-        self.next_button.setObjectName("primaryButton")
-        self.next_button.clicked.connect(self.show_organize_page)
-        self.next_button.setEnabled(False)
-        action_row.addWidget(self.next_button)
-        layout.addLayout(action_row)
+        self.table.setColumnWidth(3, 240)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        for column in (4, 5, 6):
+            self.table.setColumnHidden(column, True)
+        self.table.setMinimumHeight(220)
+        details_layout.addWidget(self.table, 1)
+        self.details_panel.setVisible(False)
+        results_layout.addWidget(self.details_panel, 1)
+        self.results_panel.setVisible(False)
+        layout.addWidget(self.results_panel, 1)
 
         self.advanced_group = self._build_advanced_group()
         self.advanced_group.setVisible(False)
         layout.addWidget(self.advanced_group)
         self.log = QPlainTextEdit()
+        self.log.setAccessibleName("运行日志")
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(130)
+        self.log.setMaximumHeight(120)
         self.log.setVisible(False)
         layout.addWidget(self.log)
         return page
 
     def _build_summary(self) -> QWidget:
-        """构建识别数量概览。"""
+        """构建紧凑、直观的识别数量概览。"""
 
         summary = QFrame()
         summary.setObjectName("summary")
+        summary.setMaximumHeight(120)
         layout = QGridLayout(summary)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setHorizontalSpacing(12)
-        heading = QLabel("识别结果概览")
-        heading.setObjectName("sectionTitle")
-        layout.addWidget(heading, 0, 0, 2, 1)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setHorizontalSpacing(8)
         self.metric_labels: dict[str, QLabel] = {}
-        for column, (key, title, color) in enumerate(
-            (("D-Log", "D-Log", "#e62d2d"), ("D-Log2", "D-Log2", "#e66b13"), ("普通709", "普通 709", "#2469d8"), ("无法确认", "无法确认", "#666a70")),
-            start=1,
+        for column, (key, title) in enumerate(
+            (
+                ("全部", "全部视频"),
+                ("D-Log", "D-Log"),
+                ("D-Log2", "D-Log2"),
+                ("普通709", "普通 709"),
+                ("Rec.2100 HLG（HDR）", "HLG HDR"),
+                ("无法确认", "待确认"),
+            ),
         ):
             title_label = QLabel(title)
-            title_label.setStyleSheet(f"color: {color}; font-weight: 700;")
+            title_label.setObjectName("metricTitle")
+            title_label.setAlignment(self._align_center())
             value_label = QLabel("0")
             value_label.setObjectName("metricValue")
+            value_label.setAlignment(self._align_center())
             self.metric_labels[key] = value_label
             layout.addWidget(title_label, 0, column)
             layout.addWidget(value_label, 1, column)
+            layout.setColumnStretch(column, 1)
         return summary
 
     def _build_advanced_group(self) -> QGroupBox:
         """构建不干扰主流程的高级设置。"""
 
         group = QGroupBox("高级设置")
+        group.setObjectName("advancedGroup")
         layout = QGridLayout(group)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(10)
+        self.recursive_check = QCheckBox("识别时包含子文件夹")
+        self.recursive_check.setChecked(True)
+        self.recursive_check.stateChanged.connect(self._on_recursive_changed)
         self.conflict_combo = QComboBox()
+        self.conflict_combo.setAccessibleName("同名文件处理方式")
         self.conflict_combo.addItem("发现同名文件时停止", "error")
         self.conflict_combo.addItem("跳过同名文件", "skip")
         self.conflict_combo.addItem("自动追加序号", "suffix")
         self.name_template_edit = QLineEdit()
+        self.name_template_edit.setAccessibleName("文件名模板")
         self.name_template_edit.setPlaceholderText("例如：{mode}_{original}")
         self.dir_template_edit = QLineEdit()
+        self.dir_template_edit.setAccessibleName("目录模板")
         self.dir_template_edit.setPlaceholderText("例如：{mode}")
         self.sidecar_check = QCheckBox("同时整理同名字幕、缩略图等伴随文件")
-        layout.addWidget(QLabel("冲突处理"), 0, 0)
-        layout.addWidget(self.conflict_combo, 0, 1)
-        layout.addWidget(QLabel("文件名模板"), 1, 0)
-        layout.addWidget(self.name_template_edit, 1, 1)
-        layout.addWidget(QLabel("目录模板"), 2, 0)
-        layout.addWidget(self.dir_template_edit, 2, 1)
-        layout.addWidget(self.sidecar_check, 3, 0, 1, 2)
+        self.log_button = QPushButton("查看运行日志")
+        self.log_button.setObjectName("quietButton")
+        self.log_button.clicked.connect(self._toggle_log)
+        layout.addWidget(self.recursive_check, 0, 0, 1, 2)
+        layout.addWidget(QLabel("同名文件"), 1, 0)
+        layout.addWidget(self.conflict_combo, 1, 1)
+        layout.addWidget(QLabel("文件名模板"), 2, 0)
+        layout.addWidget(self.name_template_edit, 2, 1)
+        layout.addWidget(QLabel("分类目录模板"), 3, 0)
+        layout.addWidget(self.dir_template_edit, 3, 1)
+        layout.addWidget(self.sidecar_check, 4, 0, 1, 2)
+        layout.addWidget(self.log_button, 5, 0, 1, 2)
         for control in (self.conflict_combo, self.name_template_edit, self.dir_template_edit, self.sidecar_check):
-            signal = control.currentIndexChanged if isinstance(control, QComboBox) else (
-                control.textChanged if isinstance(control, QLineEdit) else control.stateChanged
+            signal = (
+                control.currentIndexChanged
+                if isinstance(control, QComboBox)
+                else (control.textChanged if isinstance(control, QLineEdit) else control.stateChanged)
             )
             signal.connect(self._invalidate_plan)
         return group
 
-    def _build_organize_page(self) -> QWidget:
-        """构建第三步整理方式与直接执行页。"""
+    def _build_organize_card(self) -> QWidget:
+        """构建无需页面跳转的整理方式与主操作卡片。"""
 
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        title = QLabel("选择整理方式")
-        title.setObjectName("pageTitle")
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
+
+        title = QLabel("如何整理这些视频？")
+        title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        hint = QLabel("建议首次使用“复制到分类文件夹”，它会保留全部原始文件。")
+        hint = QLabel("默认使用复制方式，原始文件不会被修改。")
         hint.setObjectName("mutedText")
         layout.addWidget(hint)
 
-        options = QHBoxLayout()
+        # 保留 QComboBox 作为稳定的数据接口，实际界面使用更直观的三张选择卡。
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("添加文件名前缀", "prefix")
         self.mode_combo.addItem("移动到分类文件夹", "move")
         self.mode_combo.addItem("复制到分类文件夹（推荐）", "copy")
         self.mode_combo.setCurrentIndex(2)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        options.addWidget(QLabel("整理方式"))
-        options.addWidget(self.mode_combo, 1)
+        self.mode_combo.setVisible(False)
+
+        options = QHBoxLayout()
+        options.setSpacing(10)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self.mode_buttons: dict[str, QPushButton] = {}
+        option_specs = (
+            ("copy", "复制到分类文件夹\n推荐 · 保留原始文件"),
+            ("move", "移动到分类文件夹\n节省空间 · 改变文件位置"),
+            ("prefix", "添加文件名前缀\n不创建新的分类文件夹"),
+        )
+        self.mode_option_texts = dict(option_specs)
+        for mode, text in option_specs:
+            button = QPushButton(text)
+            button.setObjectName("modeOption")
+            button.setCheckable(True)
+            button.setMinimumHeight(60)
+            button.clicked.connect(lambda _checked=False, value=mode: self._select_mode(value))
+            self.mode_group.addButton(button)
+            self.mode_buttons[mode] = button
+            options.addWidget(button, 1)
+        self.mode_buttons["copy"].setChecked(True)
         layout.addLayout(options)
 
         self.action_hint = QLabel()
         self.action_hint.setObjectName("actionBanner")
         self.action_hint.setWordWrap(True)
-        layout.addWidget(self.action_hint)
-        layout.addStretch(1)
-
         actions = QHBoxLayout()
-        self.back_button = QPushButton("返回检查结果")
-        self.back_button.clicked.connect(self.show_results_page)
-        actions.addWidget(self.back_button)
-        actions.addStretch(1)
-        self.apply_button = QPushButton("开始复制整理")
+        actions.setSpacing(10)
+        actions.addWidget(self.action_hint, 1)
+        self.apply_button = QPushButton("复制并整理")
         self.apply_button.setObjectName("primaryButton")
         self.apply_button.clicked.connect(self.apply_current_plan)
-        self.apply_button.setEnabled(True)
+        self.apply_button.setEnabled(False)
         actions.addWidget(self.apply_button)
         layout.addLayout(actions)
-        return page
+        self.action_status_label = QLabel()
+        self.action_status_label.setObjectName("mutedText")
+        self.action_status_label.setVisible(False)
+        layout.addWidget(self.action_status_label)
+        return card
 
     @staticmethod
     def _align_center():  # noqa: ANN205
@@ -499,68 +586,223 @@ class MainWindow(QMainWindow):
         return getattr(getattr(Qt, "AlignmentFlag", Qt), "AlignCenter")
 
     def _apply_style(self) -> None:
-        """应用与选定原型一致的浅色桌面工具主题。"""
+        """应用克制、清晰的浅色桌面工具主题。"""
 
         self.setStyleSheet(
             """
-            QWidget { font-family: "Microsoft YaHei UI"; font-size: 14px; }
-            QMainWindow, QWidget#content { background: #f6f7f8; color: #202124; }
-            QMenuBar { background: #ffffff; border-bottom: 1px solid #e4e6e9; padding: 4px; }
-            QFrame#sidebar { background: #ffffff; border-right: 1px solid #e4e6e9; }
+            QWidget {
+                color: #1f2937;
+                font-family: "Microsoft YaHei UI";
+                font-size: 14px;
+            }
+            QMainWindow, QWidget#appBackground { background: #f4f5f7; }
+            QFrame#content { background: transparent; }
+            QLabel#brandMark {
+                color: #ffffff;
+                background: #d92d20;
+                border-radius: 10px;
+                font-size: 22px;
+                font-weight: 800;
+            }
+            QLabel#appTitle { font-size: 23px; font-weight: 700; }
             QLabel#sectionTitle { font-size: 17px; font-weight: 700; }
-            QLabel#folderName { font-size: 18px; font-weight: 700; }
-            QLabel#mutedText { color: #6f7379; font-size: 14px; }
-            QLabel#factValue { font-weight: 600; }
-            QLabel#workflowStep { padding: 11px 14px; color: #6f7379; font-size: 15px; line-height: 1.5; }
-            QLabel#workflowStep[active="true"] { color: #e62d2d; font-size: 17px; font-weight: 700; }
-            QFrame#summary { background: #ffffff; border: 1px solid #e4e6e9; border-radius: 8px; }
-            QLabel#metricValue { font-size: 32px; font-weight: 700; }
-            QLabel#pageTitle { font-size: 28px; font-weight: 700; }
-            QLabel#emptyState { color: #6f7379; font-size: 16px; padding: 22px; }
-            QLabel#infoBanner { background: #fff8f1; border: 1px solid #f3d7b9; border-radius: 7px; padding: 12px; }
-            QLabel#actionBanner { background: #ffffff; border: 1px solid #e4e6e9; border-left: 4px solid #e62d2d; border-radius: 8px; padding: 20px; font-size: 17px; font-weight: 600; }
-            QPushButton, QComboBox, QLineEdit { min-height: 42px; border: 1px solid #d9dce0; border-radius: 7px; padding: 0 13px; background: #ffffff; font-size: 15px; }
-            QPushButton:hover { background: #f1f2f4; }
-            QPushButton:disabled { color: #9a9da2; background: #eceef0; }
-            QPushButton#primaryButton { min-height: 46px; color: #ffffff; background: #e62d2d; border-color: #e62d2d; font-size: 16px; font-weight: 700; }
-            QPushButton#primaryButton:hover { background: #c92222; }
-            QPushButton#primaryButton:disabled { color: #ffffff; background: #e9a1a1; border-color: #e9a1a1; }
-            QTableView { background: #ffffff; alternate-background-color: #fbfbfc; border: 1px solid #e4e6e9; border-radius: 8px; gridline-color: #eceef0; selection-background-color: #fff0f0; selection-color: #202124; }
-            QHeaderView::section { background: #fafbfc; border: 0; border-bottom: 1px solid #e4e6e9; padding: 10px; font-weight: 600; }
-            QGroupBox { border: 1px solid #e4e6e9; border-radius: 8px; margin-top: 10px; padding-top: 12px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; font-weight: 700; }
-            QProgressBar { max-height: 4px; border: 0; background: #eceef0; }
-            QProgressBar::chunk { background: #e62d2d; }
+            QLabel#resultTitle { color: #067647; font-size: 20px; font-weight: 700; }
+            QLabel#mutedText { color: #667085; font-size: 13px; }
+            QLabel#statusText { color: #475467; font-size: 13px; }
+            QLabel#emptyState {
+                color: #667085;
+                background: #f9fafb;
+                border: 1px dashed #d0d5dd;
+                border-radius: 8px;
+                padding: 12px;
+            }
+            QFrame#card, QFrame#summary {
+                background: #ffffff;
+                border: 1px solid #e4e7ec;
+                border-radius: 10px;
+            }
+            QFrame#resultsPanel { background: transparent; border: 0; }
+            QFrame#summary { border-radius: 9px; }
+            QLabel#metricTitle { color: #667085; font-size: 12px; font-weight: 600; }
+            QLabel#metricValue { font-size: 25px; font-weight: 700; }
+            QLabel#warningBanner {
+                color: #934009;
+                background: #fff7ed;
+                border: 1px solid #fed7aa;
+                border-radius: 8px;
+                padding: 10px 12px;
+            }
+            QLabel#actionBanner {
+                color: #344054;
+                background: #f9fafb;
+                border: 1px solid #eaecf0;
+                border-radius: 8px;
+                padding: 11px 13px;
+                font-size: 14px;
+            }
+            QPushButton, QComboBox, QLineEdit {
+                min-height: 40px;
+                background: #ffffff;
+                border: 1px solid #d0d5dd;
+                border-radius: 8px;
+                padding: 0 12px;
+            }
+            QPushButton:hover { background: #f9fafb; border-color: #98a2b3; }
+            QPushButton:focus, QComboBox:focus, QLineEdit:focus {
+                border: 2px solid #d92d20;
+            }
+            QPushButton:disabled {
+                color: #98a2b3;
+                background: #f2f4f7;
+                border-color: #eaecf0;
+            }
+            QPushButton#quietButton { color: #475467; background: transparent; }
+            QPushButton#selectButton {
+                color: #b42318;
+                background: #fff7f6;
+                border-color: #f0b5af;
+                font-weight: 700;
+            }
+            QPushButton#selectButton:hover { background: #feeceb; }
+            QPushButton#modeOption {
+                color: #344054;
+                background: #ffffff;
+                border: 1px solid #d0d5dd;
+                padding: 9px 12px;
+                text-align: left;
+                font-weight: 600;
+            }
+            QPushButton#modeOption:hover { background: #f9fafb; border-color: #98a2b3; }
+            QPushButton#modeOption:checked {
+                color: #b42318;
+                background: #fff7f6;
+                border: 2px solid #d92d20;
+            }
+            QPushButton#primaryButton {
+                min-height: 46px;
+                color: #ffffff;
+                background: #d92d20;
+                border-color: #d92d20;
+                padding: 0 22px;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QPushButton#primaryButton:hover { background: #b42318; border-color: #b42318; }
+            QPushButton#primaryButton:disabled {
+                color: #ffffff;
+                background: #e6aaa5;
+                border-color: #e6aaa5;
+            }
+            QTableView {
+                background: #ffffff;
+                alternate-background-color: #f9fafb;
+                border: 0;
+                gridline-color: #eaecf0;
+                selection-background-color: #fff0ef;
+                selection-color: #1f2937;
+            }
+            QHeaderView::section {
+                color: #475467;
+                background: #f9fafb;
+                border: 0;
+                border-bottom: 1px solid #e4e7ec;
+                padding: 9px;
+                font-weight: 600;
+            }
+            QGroupBox#advancedGroup {
+                background: #ffffff;
+                border: 1px solid #e4e7ec;
+                border-radius: 10px;
+                margin-top: 10px;
+                padding-top: 12px;
+            }
+            QGroupBox#advancedGroup::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+                font-weight: 700;
+            }
+            QProgressBar { max-height: 3px; border: 0; background: #eaecf0; }
+            QProgressBar::chunk { background: #d92d20; }
+            QPlainTextEdit {
+                color: #344054;
+                background: #ffffff;
+                border: 1px solid #e4e7ec;
+                border-radius: 8px;
+                padding: 8px;
+            }
             """
         )
 
-    def _set_step(self, step: int) -> None:
-        """更新步骤条视觉状态。"""
+    def _reset_interface(self) -> None:
+        """恢复初始空状态，不保留任何过期的扫描或执行信息。"""
 
-        for index, label in enumerate(self.step_labels, start=1):
-            label.setProperty("active", index == step)
-            label.style().unpolish(label)
-            label.style().polish(label)
+        self.results_panel.setVisible(False)
+        self.details_panel.setVisible(False)
+        self.details_button.setText("查看文件明细")
+        self.empty_label.setVisible(True)
+        self.empty_label.setText("识别速度很快，无需预先配置任何选项")
+        self.scan_state_label.setVisible(True)
+        self.scan_state_label.setText("等待选择文件夹")
+        self.rescan_button.setEnabled(False)
+        self.export_button.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self.attention_label.setVisible(False)
+        self._update_summary([])
+        self._on_mode_changed()
+        self._update_organize_action()
+        self.choose_button.setFocus()
 
-    def _set_busy(self, busy: bool, message: str = "") -> None:
+    def _set_busy(self, busy: bool, message: str = "", *, kind: str | None = None) -> None:
         """统一切换任务运行状态，避免重复提交。"""
 
         self._busy = busy
+        self._busy_kind = kind if busy else None
         self.progress.setVisible(busy)
-        self.scan_button.setEnabled(not busy)
+        self.path_edit.setEnabled(not busy)
         self.rescan_button.setEnabled(not busy and bool(self.path_edit.text().strip()))
         self.choose_button.setEnabled(not busy)
-        self.apply_button.setEnabled(not busy and bool(self.plan))
-        self.back_button.setEnabled(not busy)
+        self.undo_button.setEnabled(not busy)
+        self.advanced_button.setEnabled(not busy)
+        self.export_button.setEnabled(not busy and bool(self.results))
+        self.details_button.setEnabled(not busy and bool(self.results))
+        self.recursive_check.setEnabled(not busy)
+        self.conflict_combo.setEnabled(not busy and not self._undo_mode)
+        self.sidecar_check.setEnabled(not busy and not self._undo_mode)
+        filters_enabled = (
+            not busy and bool(self.results) and not self._undo_mode and not self.plan and not self._execution_completed
+        )
+        self._set_filter_controls_enabled(filters_enabled)
+        mode = str(self.mode_combo.currentData())
+        self.name_template_edit.setEnabled(not busy and not self._undo_mode and mode == "prefix")
+        self.dir_template_edit.setEnabled(not busy and not self._undo_mode and mode != "prefix")
+        for button in self.mode_buttons.values():
+            button.setEnabled(not busy and not self._undo_mode and not self._execution_completed)
+        self._update_organize_action()
         if message:
             self.scan_state_label.setText(message)
+
+    def _set_filter_controls_enabled(self, enabled: bool) -> None:
+        """统一启停筛选控件，避免出现可操作但无效果的状态。"""
+
+        self.status_filter.setEnabled(enabled)
+        self.mode_filter.setEnabled(enabled)
+        self.search_edit.setEnabled(enabled)
+
+    def _toggle_details(self) -> None:
+        """展开或折叠低频使用的文件明细。"""
+
+        visible = not self.details_panel.isVisible()
+        self.details_panel.setVisible(visible)
+        self.organize_card.setVisible(not visible)
+        self.details_button.setText("返回整理操作" if visible else "查看文件明细")
 
     def _toggle_advanced(self) -> None:
         """展开或折叠高级设置。"""
 
         visible = not self.advanced_group.isVisible()
         self.advanced_group.setVisible(visible)
-        self.advanced_button.setText("收起高级设置" if visible else "高级设置")
+        self.advanced_button.setText("收起设置" if visible else "设置")
 
     def _toggle_log(self) -> None:
         """展开或折叠运行日志。"""
@@ -572,76 +814,118 @@ class MainWindow(QMainWindow):
     def _on_path_changed(self) -> None:
         """目录变化时清除旧结果，避免误用已失效计划。"""
 
-        if self._busy:
+        if self._busy_kind == "execution":
             return
-        self.rescan_button.setEnabled(bool(self.path_edit.text().strip()))
-        if self.results:
+        if self._busy_kind == "scan":
+            # 外部代码仍可能在扫描中修改文本；令旧任务失效，避免跨目录整理。
+            self._scan_token += 1
+            self._set_busy(False, "目录已改变，请重新识别")
+        self.scan_state_label.setVisible(True)
+        path_text = self.path_edit.text().strip()
+        self.folder_label.setText(
+            "已输入新路径 · 等待识别" if path_text else "拖入文件夹，或点击右侧按钮；选择后会立即识别"
+        )
+        self.folder_label.setToolTip(path_text)
+        self._scan_root = None
+        self._operation_root = None
+        self._undo_mode = False
+        self._execution_completed = False
+        self.rescan_button.setEnabled(bool(path_text))
+        if self.results or self.plan:
             self.results = []
             self.plan = []
             self.model.clear()
             self._update_summary([])
-            self.next_button.setEnabled(False)
+            self.results_panel.setVisible(False)
             self.empty_label.setVisible(True)
-            self.selection_label.setText("目录已更改，请重新扫描")
+            self.empty_label.setText("路径已改变，按 Enter 或点击“重新识别”")
+            self.scan_state_label.setText("等待重新识别")
+            self.export_button.setEnabled(False)
+            self.details_button.setEnabled(False)
+            self.attention_label.setVisible(False)
+            self._update_organize_action()
+        elif not path_text:
+            self.empty_label.setVisible(True)
+            self.empty_label.setText("识别速度很快，无需预先配置任何选项")
+            self.scan_state_label.setText("等待选择文件夹")
+
+    def _select_mode(self, mode: str) -> None:
+        """由直观的方式卡片同步内部整理模式。"""
+
+        index = self.mode_combo.findData(mode)
+        if index >= 0 and index != self.mode_combo.currentIndex():
+            self.mode_combo.setCurrentIndex(index)
+
+    def _on_recursive_changed(self, _state: int | None = None) -> None:
+        """扫描范围改变后自动重新识别，避免显示与实际范围不一致。"""
+
+        if not self._busy and self.path_edit.text().strip() and self.results:
+            self.start_scan()
 
     def _on_mode_changed(self) -> None:
         """整理方式变化时使旧内部计划失效。"""
 
+        mode = str(self.mode_combo.currentData())
+        for value, button in self.mode_buttons.items():
+            selected = value == mode
+            button.setChecked(selected)
+            button.setText(f"✓ {self.mode_option_texts[value]}" if selected else self.mode_option_texts[value])
         self._invalidate_plan()
-        mode = self.mode_combo.currentData()
         templates_enabled = mode == "prefix"
-        self.name_template_edit.setEnabled(templates_enabled)
-        self.dir_template_edit.setEnabled(not templates_enabled)
+        settings_enabled = not self._busy and not self._undo_mode
+        self.name_template_edit.setEnabled(settings_enabled and templates_enabled)
+        self.dir_template_edit.setEnabled(settings_enabled and not templates_enabled)
 
     def _update_organize_action(self) -> None:
-        """根据当前整理方式更新醒目的操作说明和主按钮。"""
+        """根据当前整理方式更新自然语言说明和唯一主按钮。"""
 
         mode = str(self.mode_combo.currentData())
+        count = (
+            sum(result.mode.value in {"dlog", "dlog2"} for result in self.results)
+            if mode == "prefix"
+            else sum(result.evidence.primary_source != "conflict" for result in self.results)
+        )
         descriptions = {
-            "prefix": ("为 D-Log / D-Log2 文件添加前缀", "开始添加前缀"),
-            "move": ("将视频移动到对应色彩模式的分类文件夹", "开始移动整理"),
-            "copy": ("复制到分类文件夹，并保留全部原始视频（推荐）", "开始复制整理"),
+            "prefix": (f"将为 {count} 个 D-Log / D-Log2 视频添加前缀。", f"添加前缀（{count}）"),
+            "move": (f"将移动 {count} 个视频到分类文件夹，原位置将不再保留这些文件。", f"移动并整理（{count}）"),
+            "copy": (f"将复制 {count} 个视频到分类文件夹，全部原始文件保持不变。", f"复制并整理（{count}）"),
         }
         description, button_text = descriptions[mode]
-        self.action_hint.setText(f"即将执行：{description}\n点击主按钮后会显示最终文件数量，确认后立即开始。")
+        if self._undo_mode:
+            self.action_hint.setText(f"已载入操作记录，共 {len(self.plan)} 个文件可以撤销。")
+            self.apply_button.setText(f"撤销这次整理（{len(self.plan)}）")
+            self.apply_button.setEnabled(bool(self.plan) and not self._busy)
+            self.action_status_label.setText("点击后会显示最终数量并再次确认")
+            self.action_status_label.setVisible(True)
+            return
+        self.action_hint.setText(description if self.results else "完成识别后，这里会显示本次整理的准确说明。")
         self.apply_button.setText(button_text)
-        self.apply_button.setEnabled(bool(self.results) and not self._busy)
+        enabled = bool(self.results) and count > 0 and not self._busy and not self._execution_completed
+        self.apply_button.setEnabled(enabled)
+        if self._execution_completed:
+            self.action_status_label.setText("本次操作已完成；如需再次整理，请重新识别")
+            self.action_status_label.setVisible(True)
+        else:
+            self.action_status_label.setVisible(False)
 
     def _invalidate_plan(self) -> None:
         """设置变化时丢弃内部计划，执行前会自动重新计算。"""
 
+        if self._undo_mode:
+            return
+        had_plan = bool(self.plan)
         self.plan = []
+        if had_plan and self.results and not self._busy and not self._execution_completed:
+            self._apply_filters()
+            self._set_filter_controls_enabled(True)
         if hasattr(self, "action_hint"):
             self._update_organize_action()
-
-    def _transition_to(self, page_index: int, step: int) -> None:
-        """使用短暂淡入强调页面变化，同时避免拖慢操作。"""
-
-        self.pages.setCurrentIndex(page_index)
-        self._set_step(step)
-        page = self.pages.currentWidget()
-        effect = QGraphicsOpacityEffect(page)
-        page.setGraphicsEffect(effect)
-        animation = QPropertyAnimation(effect, b"opacity", self)
-        animation.setDuration(240)
-        animation.setStartValue(0.25)
-        animation.setEndValue(1.0)
-        animation.setEasingCurve(easing_out_cubic())
-        animation.finished.connect(lambda: self._finish_page_transition(page))
-        self._page_animation = animation
-        animation.start()
-
-    def _finish_page_transition(self, page: QWidget) -> None:
-        """移除临时特效并强制重绘，避免部分 Qt/显卡组合留下黑色缓存。"""
-
-        page.setGraphicsEffect(None)
-        page.update()
-        if self.centralWidget() is not None:
-            self.centralWidget().update()
 
     def dragEnterEvent(self, event) -> None:  # noqa: ANN001,N802
         """只接受包含本地目录的拖拽。"""
 
+        if self._busy:
+            return
         urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
         if urls and Path(urls[0].toLocalFile()).is_dir():
             event.acceptProposedAction()
@@ -649,6 +933,8 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event) -> None:  # noqa: ANN001,N802
         """使用拖入的第一个目录并开始扫描。"""
 
+        if self._busy:
+            return
         urls = event.mimeData().urls()
         if urls:
             self.path_edit.setText(urls[0].toLocalFile())
@@ -657,6 +943,8 @@ class MainWindow(QMainWindow):
     def choose_directory(self) -> None:
         """选择扫描目录并立即进入扫描流程。"""
 
+        if self._busy:
+            return
         directory = QFileDialog.getExistingDirectory(self, "选择 DJI 视频目录")
         if directory:
             self.path_edit.setText(directory)
@@ -671,15 +959,42 @@ class MainWindow(QMainWindow):
         if not directory.is_dir():
             QMessageBox.warning(self, "目录无效", f"目录不存在：{directory}")
             return
+        directory = directory.resolve()
         self._scan_token += 1
         token = self._scan_token
         self._undo_mode = False
-        self._set_busy(True, "正在扫描…")
+        self._execution_completed = False
+        self._scan_root = directory
+        self._operation_root = directory
+        self._scan_recursive = self.recursive_check.isChecked()
+        for combo in (self.status_filter, self.mode_filter):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
+        self.results = []
+        self.plan = []
+        self.model.clear()
+        self.table.setColumnHidden(3, False)
+        for column in (4, 5, 6):
+            self.table.setColumnHidden(column, True)
+        self.results_panel.setVisible(False)
+        self.details_panel.setVisible(False)
+        self.organize_card.setVisible(True)
+        self.details_button.setText("查看文件明细")
+        self.empty_label.setVisible(True)
+        self.empty_label.setText("正在读取 DJI 视频元数据…")
+        self.folder_label.setText(str(directory.name or directory))
+        self.folder_label.setToolTip(str(directory))
+        self.scan_state_label.setVisible(True)
+        self._set_busy(True, "正在快速识别…", kind="scan")
         self._log(f"开始扫描：{directory}")
-        worker = ScanWorker(token, directory.resolve(), self.recursive_check.isChecked())
+        worker = ScanWorker(token, directory, self._scan_recursive)
         worker.signals.finished.connect(self.on_scan_finished)
         worker.signals.failed.connect(self.on_task_failed)
-        self._active_workers[token] = worker
+        self._active_workers[("scan", token)] = worker
         self.thread_pool.start(worker)
 
     @Slot(object)
@@ -687,39 +1002,53 @@ class MainWindow(QMainWindow):
         """只接受当前令牌对应的扫描结果。"""
 
         token, directory, results = payload
-        self._active_workers.pop(token, None)
-        if token != self._scan_token:
+        self._active_workers.pop(("scan", token), None)
+        if token != self._scan_token or directory != self._scan_root:
             self._log(f"忽略已过期的扫描结果：任务 {token}")
+            active_scan = any(kind == "scan" for kind, _token in self._active_workers)
+            if not active_scan and self._busy_kind == "scan":
+                self._set_busy(False, "目录已改变，请重新识别")
             return
         self.results = list(results)
         self.plan = []
         self.model.set_results(self.results)
         self._update_summary(self.results)
         counts = "，".join(f"{key} {value}" for key, value in summarize_results(self.results).items()) or "没有视频"
-        self.folder_label.setText(directory.name or str(directory))
-        self.fact_labels["files"].setText(f"{len(self.results)} 个")
-        self.fact_labels["modes"].setText(counts)
-        self.fact_labels["scope"].setText("包含子文件夹" if self.recursive_check.isChecked() else "仅当前文件夹")
-        self.selection_label.setText(f"已识别 {len(self.results)} 个视频")
-        self.scan_state_label.setText("扫描完成")
+        self.folder_label.setText(str(directory.name or directory))
+        self.folder_label.setToolTip(str(directory))
+        scope = "包含子文件夹" if self._scan_recursive else "仅当前文件夹"
+        self.selection_label.setText(f"共识别 {len(self.results)} 个视频 · {scope}")
         self.empty_label.setVisible(not self.results)
-        self.next_button.setEnabled(bool(self.results))
+        self.empty_label.setText("没有找到可识别的 DJI 视频，请选择其他文件夹")
+        self.results_panel.setVisible(bool(self.results))
         self.export_button.setEnabled(bool(self.results))
-        self._set_busy(False)
-        self._set_step(2 if self.results else 1)
+        self.details_button.setEnabled(bool(self.results))
+        attention = summarize_results(self.results).get("无法确认", 0)
+        self.attention_label.setVisible(attention > 0)
+        self.attention_label.setText(f"有 {attention} 个视频无法确认色彩模式，整理前建议查看文件明细。")
+        self._set_busy(False, "识别完成" if self.results else "未找到视频")
+        self.scan_state_label.setVisible(not self.results)
+        self._update_organize_action()
         self._log(f"扫描完成：{len(self.results)} 个文件；{counts}")
 
     @Slot(object)
     def on_task_failed(self, payload) -> None:  # noqa: ANN001
         """显示后台任务错误；过期任务只记日志。"""
 
-        token, message = payload
-        self._active_workers.pop(token, None)
-        current = token in {self._scan_token, self._execution_token}
+        kind, token, message = payload
+        self._active_workers.pop((kind, token), None)
+        current = (kind == "scan" and token == self._scan_token) or (
+            kind == "execution" and token == self._execution_token
+        )
         if not current:
-            self._log(f"忽略已过期任务错误：{message}")
+            task_name = {"scan": "扫描", "execution": "执行"}.get(kind, kind)
+            self._log(f"忽略已过期的{task_name}任务错误：{message}")
             return
         self._set_busy(False, "任务失败")
+        self.scan_state_label.setVisible(True)
+        self.empty_label.setVisible(not self.results)
+        if not self.results:
+            self.empty_label.setText("识别失败，请检查目录后重试")
         self._log(f"任务失败：{message}")
         QMessageBox.critical(self, "任务失败", message)
 
@@ -728,12 +1057,12 @@ class MainWindow(QMainWindow):
 
         counts = summarize_results(results)
         for key, label in self.metric_labels.items():
-            label.setText(str(counts.get(key, 0)))
+            label.setText(str(len(results) if key == "全部" else counts.get(key, 0)))
 
     def _apply_filters(self) -> None:
         """按状态、色彩模式和搜索词刷新扫描结果表格。"""
 
-        if self.pages.currentIndex() != 0 or not self.results:
+        if not self.results or self._undo_mode or self.plan or self._execution_completed:
             return
         mode = self.mode_filter.currentData()
         status = self.status_filter.currentData()
@@ -754,19 +1083,18 @@ class MainWindow(QMainWindow):
         self.selection_label.setText(f"当前显示 {len(filtered)} / {len(self.results)} 个视频")
 
     def show_organize_page(self) -> None:
-        """进入第三步，选择方式后即可直接整理。"""
+        """兼容旧调用：单页界面中直接聚焦整理主操作。"""
 
         if not self.results:
             QMessageBox.information(self, "没有结果", "请先扫描目录。")
             return
         self._undo_mode = False
-        self._transition_to(1, 3)
+        self.results_panel.setVisible(True)
         self._update_organize_action()
 
     def show_results_page(self) -> None:
-        """返回识别结果页。"""
+        """兼容旧调用：单页界面中展开识别结果。"""
 
-        self._transition_to(0, 2 if self.results else 1)
         self._apply_filters()
 
     def build_current_plan(self) -> bool:
@@ -775,7 +1103,19 @@ class MainWindow(QMainWindow):
         if not self.results:
             QMessageBox.information(self, "没有结果", "请先扫描目录。")
             return False
-        directory = Path(self.path_edit.text()).resolve()
+        if self._execution_completed:
+            QMessageBox.information(self, "本次操作已完成", "如需再次整理，请先重新识别当前目录。")
+            return False
+        directory = self._operation_root or self._scan_root
+        if directory is None:
+            # 兼容测试和外部集成直接注入结果的用法，同时验证结果确实属于该目录。
+            candidate = Path(self.path_edit.text()).resolve()
+            if candidate.is_dir() and all(result.path.resolve().is_relative_to(candidate) for result in self.results):
+                directory = candidate
+                self._operation_root = candidate
+            else:
+                QMessageBox.warning(self, "目录状态已失效", "请重新识别当前目录后再整理。")
+                return False
         try:
             self.plan = build_plan(
                 self.results,
@@ -793,8 +1133,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "无法开始整理", str(exc))
             return False
         self.model.set_plan(self.plan)
+        self._set_filter_controls_enabled(False)
         ready = sum(not item.skipped and item.target is not None for item in self.plan)
         skipped = len(self.plan) - ready
+        self.action_status_label.setText(f"执行前检查：将处理 {ready} 个，跳过 {skipped} 个")
+        self.action_status_label.setVisible(True)
         self._log(f"执行前检查完成：{ready} 个待处理，{skipped} 个跳过")
         return True
 
@@ -810,43 +1153,62 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "没有可撤销内容", "当前操作记录中没有可撤销的文件。")
             return
         ready = sum(not item.skipped and item.target is not None for item in self.plan)
+        skipped = len(self.plan) - ready
         verb = "撤销" if self._undo_mode else str(self.mode_combo.currentText()).replace("（推荐）", "")
         answer = QMessageBox.question(
             self,
             "最终确认",
-            f"整理方式：{verb}\n将处理 {ready} 个文件。\n\n确认后立即开始，是否继续？",
+            f"整理方式：{verb}\n将处理 {ready} 个文件，跳过 {skipped} 个。\n\n确认后立即开始，是否继续？",
         )
         if answer != yes_button():
+            if not self._undo_mode:
+                self._invalidate_plan()
             return
         self._execution_token += 1
         token = self._execution_token
         operation = "undo" if self._undo_mode else str(self.mode_combo.currentData())
-        root = Path(self.path_edit.text()).resolve()
+        root = self._operation_root or self._scan_root
+        if root is None:
+            QMessageBox.warning(self, "目录状态已失效", "请重新识别目录或重新载入操作记录。")
+            return
         worker = ExecutionWorker(token, root, operation, self.plan)
         worker.signals.finished.connect(self.on_execution_finished)
         worker.signals.failed.connect(self.on_task_failed)
-        self._active_workers[token] = worker
-        self._set_busy(True, "正在执行文件操作…")
+        self._active_workers[("execution", token)] = worker
+        self._set_busy(True, "正在执行文件操作…", kind="execution")
         self.thread_pool.start(worker)
 
     @Slot(object)
     def on_execution_finished(self, outcome: ExecutionOutcome) -> None:
         """刷新执行结果，并立即使旧计划失效。"""
 
-        self._active_workers.pop(outcome.token, None)
+        self._active_workers.pop(("execution", outcome.token), None)
         if outcome.token != self._execution_token:
             self._log(f"忽略已过期的执行结果：任务 {outcome.token}")
             return
         self.model.set_execution_records(outcome.records)
-        success = sum(record.success for record in outcome.records)
-        failed = len(outcome.records) - success
+        success = 0
+        skipped = 0
+        failed = 0
+        for index, record in enumerate(outcome.records):
+            item = self.plan[index] if index < len(self.plan) else None
+            if item is not None and (item.skipped or item.target is None):
+                skipped += 1
+            elif record.success:
+                success += 1
+            else:
+                failed += 1
         self.plan = []
-        self.apply_button.setEnabled(False)
+        self._execution_completed = True
         self._set_busy(False, "执行完成")
         manifest_text = str(outcome.manifest_path) if outcome.manifest_path else "未能写入"
-        self.action_hint.setText(f"执行完成：成功 {success}，失败 {failed}。\n操作记录：{manifest_text}")
+        self.action_hint.setText(f"整理完成：成功 {success} 个，跳过 {skipped} 个，失败 {failed} 个。")
+        self.action_status_label.setText(f"操作记录：{manifest_text}")
+        self.action_status_label.setVisible(True)
         self.apply_button.setEnabled(False)
-        self._log(f"执行完成：成功 {success}，失败 {failed}；操作记录：{manifest_text}")
+        for button in self.mode_buttons.values():
+            button.setEnabled(False)
+        self._log(f"执行完成：成功 {success}，跳过 {skipped}，失败 {failed}；操作记录：{manifest_text}")
         if outcome.manifest_error:
             QMessageBox.warning(
                 self,
@@ -854,9 +1216,18 @@ class MainWindow(QMainWindow):
                 f"文件操作已经执行，请不要重复点击。撤销记录写入失败：{outcome.manifest_error}",
             )
         elif failed:
-            QMessageBox.warning(self, "部分文件处理失败", f"成功 {success} 个，失败 {failed} 个。请查看表格说明。")
+            self.table.setColumnHidden(3, True)
+            self.table.setColumnHidden(6, False)
+            self.details_panel.setVisible(True)
+            self.organize_card.setVisible(False)
+            self.details_button.setText("返回整理操作")
+            QMessageBox.warning(self, "部分文件处理失败", f"成功 {success} 个，跳过 {skipped} 个，失败 {failed} 个。")
         else:
-            QMessageBox.information(self, "执行完成", f"已成功处理 {success} 个记录。\n撤销记录：{manifest_text}")
+            QMessageBox.information(
+                self,
+                "整理完成",
+                f"成功 {success} 个，跳过 {skipped} 个。\n操作记录：{manifest_text}",
+            )
 
     def export_report(self) -> None:
         """导出当前完整扫描报告，而不是只导出筛选结果。"""
@@ -864,7 +1235,9 @@ class MainWindow(QMainWindow):
         if not self.results:
             QMessageBox.information(self, "没有结果", "请先扫描目录。")
             return
-        path, selected = QFileDialog.getSaveFileName(self, "导出识别报告", "dji_color_modes.csv", "CSV (*.csv);;JSON (*.json)")
+        path, selected = QFileDialog.getSaveFileName(
+            self, "导出识别报告", "dji_color_modes.csv", "CSV (*.csv);;JSON (*.json)"
+        )
         if not path:
             return
         fmt = "json" if selected.startswith("JSON") or path.lower().endswith(".json") else "csv"
@@ -889,14 +1262,34 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.critical(self, "无法读取操作记录", str(exc))
             return
+        self.path_edit.blockSignals(True)
+        self.path_edit.setText(str(manifest.root))
+        self.path_edit.blockSignals(False)
         self._undo_mode = True
+        self._execution_completed = False
+        self._scan_root = manifest.root
+        self._operation_root = manifest.root
         self.plan = plan
         self.results = [item.scan_result for item in plan]
         self.model.set_plan(plan)
-        self._transition_to(1, 3)
-        self.action_hint.setText(f"已载入操作记录，共 {len(plan)} 个文件可撤销。点击按钮后确认并立即执行。")
-        self.apply_button.setText(f"撤销这次整理（{len(plan)} 个文件）")
-        self.apply_button.setEnabled(bool(plan))
+        self._update_summary(self.results)
+        self.folder_label.setText(f"{manifest.root.name or manifest.root} · 已载入操作记录")
+        self.folder_label.setToolTip(str(manifest.root))
+        self.scan_state_label.setVisible(False)
+        self.selection_label.setText(f"已从操作记录载入 {len(plan)} 个文件")
+        self.results_panel.setVisible(True)
+        self.empty_label.setVisible(False)
+        self.attention_label.setVisible(False)
+        self.details_panel.setVisible(False)
+        self.organize_card.setVisible(True)
+        self.details_button.setText("查看文件明细")
+        self._update_organize_action()
+        self._set_filter_controls_enabled(False)
+        for button in self.mode_buttons.values():
+            button.setEnabled(False)
+        self.path_edit.setEnabled(False)
+        self.rescan_button.setEnabled(False)
+        self.advanced_button.setEnabled(False)
         self._log(f"已载入撤销计划：{len(plan)} 条")
 
     def _log(self, message: str) -> None:

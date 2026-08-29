@@ -16,6 +16,7 @@ DEFAULT_DIRS = {
     ColorMode.DLOG: "dlog",
     ColorMode.DLOG2: "dlog2",
     ColorMode.REC709: "rec709",
+    ColorMode.REC2100_HLG: "hlg",
     ColorMode.UNKNOWN: "unknown",
 }
 
@@ -72,6 +73,9 @@ def _build_item(
     planned_targets: set[Path],
 ) -> PlanItem:
     """生成单个计划项。"""
+
+    if result.evidence.primary_source == "conflict":
+        return PlanItem(result.path, None, PlanAction.NONE, result, skipped=True, reason="元数据证据冲突，禁止自动整理")
 
     if result.mode in {ColorMode.ERROR, ColorMode.UNKNOWN} and mode == "prefix":
         return PlanItem(result.path, None, PlanAction.NONE, result, skipped=True, reason="无需添加前缀")

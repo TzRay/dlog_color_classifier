@@ -9,7 +9,20 @@ from pathlib import Path
 from dji_color_classifier.core.models import ScanResult
 
 
-REPORT_FIELDS = ["文件名", "路径", "判定", "ColorGammaSxS枚举", "记录模式字段", "文件大小", "证据", "错误"]
+REPORT_FIELDS = [
+    "文件名",
+    "路径",
+    "判定",
+    "ColorGammaSxS枚举",
+    "记录模式字段",
+    "QuickTime色彩标签",
+    "主证据来源",
+    "置信度",
+    "冲突说明",
+    "文件大小",
+    "证据",
+    "错误",
+]
 
 
 def write_report(results: list[ScanResult], output: Path, *, fmt: str = "csv") -> None:
@@ -52,6 +65,10 @@ def _result_to_row(result: ScanResult) -> dict[str, str | int | None]:
         "判定": result.mode.label,
         "ColorGammaSxS枚举": result.evidence.color_gamma_sxs,
         "记录模式字段": result.evidence.record_mode,
+        "QuickTime色彩标签": result.evidence.metadata_label,
+        "主证据来源": result.evidence.primary_source,
+        "置信度": result.evidence.confidence,
+        "冲突说明": "；".join(result.evidence.warnings) or None,
         "文件大小": result.size,
         "证据": result.evidence.detail,
         "错误": result.error,

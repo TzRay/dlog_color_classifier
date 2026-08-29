@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from dji_color_classifier.core.scanner import scan_directory, summarize_results
+from dji_color_classifier.core.scanner import scan_directory, summarize_results  # noqa: E402
 
 
 def main() -> int:
@@ -62,8 +62,8 @@ def run_gui_plan_check(sample_dir: Path) -> None:
     window.start_scan()
     wait_until(lambda: bool(window.results), app, timeout=60)
 
-    window.mode_combo.setCurrentText("move")
-    window.conflict_combo.setCurrentText("suffix")
+    select_combo_data(window.mode_combo, "move", "整理方式")
+    select_combo_data(window.conflict_combo, "suffix", "冲突处理")
     window.dir_template_edit.setText("{mode}")
     window.build_current_plan()
     ready = len([item for item in window.plan if not item.skipped and item.target])
@@ -83,6 +83,7 @@ def run_gui_execution_check() -> None:
 
     app = QApplication.instance() or QApplication(sys.argv)
     main_window.QMessageBox.question = staticmethod(lambda *args, **kwargs: yes_button())
+    main_window.QMessageBox.information = staticmethod(lambda *args, **kwargs: None)
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -93,18 +94,29 @@ def run_gui_execution_check() -> None:
         window.path_edit.setText(str(root))
         window.start_scan()
         wait_until(lambda: bool(window.results), app, timeout=20)
-        window.mode_combo.setCurrentText("copy")
-        window.conflict_combo.setCurrentText("suffix")
+        select_combo_data(window.mode_combo, "copy", "整理方式")
+        select_combo_data(window.conflict_combo, "suffix", "冲突处理")
         window.dir_template_edit.setText("{mode}")
         window.build_current_plan()
         window.apply_current_plan()
-        app.processEvents()
 
         target = root / "unknown" / "DJI_TEST.MP4"
         manifest_dir = root / ".dji-color-classifier" / "manifests"
+        wait_until(lambda: target.exists() and bool(list(manifest_dir.glob("*.json"))), app, timeout=20)
         if not target.exists() or not list(manifest_dir.glob("*.json")):
             raise RuntimeError("GUI 执行验收失败：目标文件或 manifest 未生成")
         print("GUI 执行验收：临时复制和 manifest 生成成功")
+
+
+def select_combo_data(combo, value: str, label: str) -> None:  # noqa: ANN001
+    """按选项数据切换下拉框，并确认实际设置已经生效。"""
+
+    index = combo.findData(value)
+    if index < 0:
+        raise RuntimeError(f"{label}缺少选项：{value}")
+    combo.setCurrentIndex(index)
+    if combo.currentData() != value:
+        raise RuntimeError(f"{label}切换失败：期望 {value}，实际 {combo.currentData()}")
 
 
 def wait_until(predicate, app, *, timeout: int) -> None:

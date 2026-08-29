@@ -8,7 +8,7 @@ from dji_color_classifier.core.models import ExecutionRecord, PlanItem, ScanResu
 class ResultTableModelMixin:
     """维护统一的结果行，避免扫描结果与整理计划按索引错配。"""
 
-    headers = ["状态", "文件名", "色彩模式", "原路径", "目标路径", "识别依据", "说明"]
+    headers = ["状态", "文件名", "色彩模式", "所在文件夹", "目标路径", "识别依据", "说明"]
 
     def set_results(self, results: list[ScanResult]) -> None:
         """显示扫描结果。"""
