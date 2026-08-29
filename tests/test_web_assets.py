@@ -46,3 +46,10 @@ def test_runtime_script_only_references_existing_ids() -> None:
     html_ids = set(re.findall(r'id="([A-Za-z][A-Za-z0-9_-]*)"', html))
     referenced_ids = set(re.findall(r'\$\("#([A-Za-z][A-Za-z0-9_-]*)"\)', script))
     assert referenced_ids <= html_ids
+
+
+def test_web_packaging_collects_dynamic_pywebview_modules() -> None:
+    """发布包必须包含 pywebview 的 DOM 与当前平台后端。"""
+
+    spec = (ROOT / "packaging" / "dji-color-web.spec").read_text(encoding="utf-8")
+    assert 'collect_submodules("webview")' in spec
