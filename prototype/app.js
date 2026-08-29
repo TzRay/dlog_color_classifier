@@ -200,9 +200,11 @@
       }
       state.activeTask = "";
       state.activeKind = "";
-      refreshControls();
       if (task.state === "failed") throw new Error(task.error || "任务执行失败");
-      return onTerminal(task.result || {}, task.state);
+      // 终态回调会写入 scanId 或 needsRescan；必须在回调之后刷新按钮状态。
+      const result = onTerminal(task.result || {}, task.state);
+      refreshControls();
+      return result;
     }
   }
 

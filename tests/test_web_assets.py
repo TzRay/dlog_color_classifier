@@ -38,6 +38,14 @@ def test_runtime_script_uses_direct_organize_api_and_drop_bridge() -> None:
         assert removed not in script
 
 
+def test_task_terminal_refreshes_controls_after_state_callback() -> None:
+    """扫描终态必须先写入 scanId，再解除“执行整理”的禁用状态。"""
+
+    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
+    terminal = script.split('if (task.state === "failed")', maxsplit=1)[1].split("async function startScan", maxsplit=1)[0]
+    assert terminal.index("onTerminal(") < terminal.index("refreshControls()")
+
+
 def test_runtime_script_only_references_existing_ids() -> None:
     """防止页面调整后生产脚本静默操作不存在的 DOM 节点。"""
 
