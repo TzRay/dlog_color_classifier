@@ -52,7 +52,7 @@ def main() -> int:
 
 
 def run_web_service_check(sample_dir: Path) -> None:
-    """使用真实样本验证 Web 服务的扫描、DTO 和计划生成，不修改样本。"""
+    """使用真实样本验证 Web 服务的扫描和 DTO，不修改样本。"""
 
     service = ApplicationService(max_workers=1)
     try:
@@ -62,17 +62,9 @@ def run_web_service_check(sample_dir: Path) -> None:
         results = scan["results"]
         if scan["summary"]["total"] != len(results):
             raise RuntimeError("Web DTO 的扫描总数与结果数量不一致")
-        plan = service.build_plan(
-            {
-                "scan_id": scan["scan_id"],
-                "mode": "copy",
-                "conflict_policy": "suffix",
-                "with_sidecars": False,
-            }
-        )
-        if plan["root"] != str(sample_dir.resolve()):
-            raise RuntimeError("Web 计划根目录与扫描目录不一致")
-        print(f"Web 服务验收：扫描={len(results)}，DTO={len(scan['results'])}，复制计划={plan['actionable_count']}")
+        if scan["root"] != str(sample_dir.resolve()):
+            raise RuntimeError("Web 扫描根目录与样本目录不一致")
+        print(f"Web 服务验收：扫描={len(results)}，DTO={len(scan['results'])}，直接整理接口已就绪")
     finally:
         service.close()
 

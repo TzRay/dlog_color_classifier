@@ -242,7 +242,7 @@ GUI 适合不想使用命令行的用户。识别速度很快，因此界面采�
 
 ## Web 工作台（原生 Web 路线）
 
-Web 工作台是当前迁移方案的第一阶段实现：页面采用 `prototype/index.html` 的单页工作台原型，桌面壳使用 pywebview，后端通过任务式 Python bridge 调用现有 `core`。前端不直接访问本地文件系统，目录扫描、冲突检查、文件操作和 manifest 撤销都在 Python 服务层完成。
+Web 工作台采用无侧栏的单页界面，桌面壳使用 pywebview，后端通过任务式 Python bridge 调用现有 `core`。前端不直接访问本地文件系统，目录扫描、冲突检查和文件操作都在 Python 服务层完成。
 
 安装并启动：
 
@@ -253,10 +253,11 @@ dji-color-web
 
 工作台支持：
 
-- 选择或拖入目录，递归扫描 MP4 / MOV / M4V，并显示 D-Log、D-Log2、普通 709、HLG HDR 和待确认统计。桌面拖拽路径由 pywebview Python DOM bridge 提供。
-- 以任务 ID 轮询扫描和执行进度，支持取消扫描；长任务不会阻塞页面。
+- 选择或拖入目录，递归扫描 MP4 / MOV / M4V，并显示 D-Log、D-Log2、普通 709、HLG HDR 和未处理文件统计。桌面拖拽路径由 pywebview Python DOM bridge 提供。
+- 以任务 ID 轮询扫描和执行进度；取消整理时仍会展示取消前已经完成的文件操作。
 - 复制、移动、添加前缀三种整理方式，支持伴随文件和冲突策略。
-- 执行前二次确认，完成后自动写入 manifest；可载入操作记录并执行撤销。
+- 扫描后直接执行整理，不生成预演、操作记录、manifest 或撤销入口。
+- 无法确认、元数据冲突和识别失败的视频不会自动整理。
 - 导出 CSV 或 JSON 识别报告。
 
 没有安装 pywebview 时仍可直接打开 `prototype/index.html` 做视觉验收；此时页面会显示等待本地服务，真实文件操作必须从 `dji-color-web` 启动。

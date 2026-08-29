@@ -41,9 +41,10 @@ reader 不解码视频，不读取画面内容，也不修改 MP4 文件。
 
 `dji_color_classifier/web_service.py` 提供与 UI 无关的 JSON DTO 和任务式服务边界：
 
-- `start_scan` / `get_task_status` / `cancel_task`：后台扫描及进度。
-- `build_plan`：只生成计划，不修改文件。
-- `execute_plan` / `execute_undo`：必须收到 `confirmed=true`，执行后写入 manifest。
-- `export_report` / `load_manifest` / `preview_undo`：报告和操作记录。
+- `start_scan` / `get_task_status` / `cancel_task`：后台扫描、整理及进度。
+- `execute_organize`：根据 scan ID 和当前整理设置直接执行；任务开始时即时构建计划，不写 manifest。
+- `export_report`：导出扫描报告。
+
+Web 服务对同一个扫描根目录加整理互斥，并跳过无法确认、元数据冲突和识别失败的文件。取消整理时会返回取消前已完成的结果，前端必须展示该结果；CLI 和原生 GUI 保留预演、manifest 与撤销能力。
 
 `dji_color_classifier/web_app.py` 只负责 pywebview 窗口和系统文件对话框。原型页面使用同一组 DTO，因此后续替换为 Vue 3 + TypeScript 或 Tauri 2 时，不需要重写识别和文件整理核心。

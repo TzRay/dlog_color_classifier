@@ -1,8 +1,7 @@
-"""面向 Web 前端的应用服务与任务式 JSON API。
+"""面向 Web 工作台的任务式应用服务。
 
-该模块是 GUI 与核心模块之间的稳定边界：前端只提交目录、扫描结果 ID、
-计划 ID 和 manifest 路径，不直接接触文件系统或低级文件操作。所有路径校验、
-冲突处理、manifest 写入和撤销安全检查仍由现有 core 模块负责。
+Web 工作台只负责选择目录、查看识别结果和直接整理。它不保存预演计划、
+操作记录或撤销清单；CLI 和原生 GUI 仍可继续使用 core 层的对应能力。
 """
 
 from __future__ import annotations
@@ -16,8 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from dji_color_classifier.core.executor import build_undo_plan, execute_plan as execute_core_plan
-from dji_color_classifier.core.manifest import create_manifest, read_manifest, write_manifest
+from dji_color_classifier.core.executor import execute_plan as execute_core_plan
 from dji_color_classifier.core.models import (
     ColorMode,
     ConflictPolicy,
@@ -32,6 +30,8 @@ from dji_color_classifier.core.scanner import iter_video_files, scan_directory, 
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_RETAINED_TASKS = 100
+MAX_RETAINED_SCANS = 20
 
 
 @dataclass
@@ -61,7 +61,7 @@ class _Task:
                 "state": self.state,
                 "completed": self.completed,
                 "total": self.total,
-                "progress": (self.completed / self.total if self.total else 0),
+                "progress": self.completed / self.total if self.total else 0,
                 "message": self.message,
                 "result": self.result,
                 "error": self.error,
@@ -71,20 +71,17 @@ class _Task:
 
 
 class ApplicationService:
-    """提供桌面 Web 前端所需的任务式应用服务。"""
+    """提供桌面 Web 前端所需的扫描、整理和报告接口。"""
 
     def __init__(self, *, max_workers: int = 2) -> None:
-        """初始化服务及其有限线程池。"""
+        """初始化服务及有限线程池。"""
 
-        self._executor = ThreadPoolExecutor(
-            max_workers=max_workers,
-            thread_name_prefix="dji-color-web",
-        )
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="dji-color-web")
         self._lock = threading.RLock()
         self._tasks: dict[str, _Task] = {}
         self._scans: dict[str, dict[str, Any]] = {}
-        self._plans: dict[str, dict[str, Any]] = {}
-        self._last_manifest_path: Path | None = None
+        # 同一素材根目录只允许一个整理任务，避免并发计划互相抢占目标路径。
+        self._organizing_roots: set[Path] = set()
 
     def close(self) -> None:
         """关闭任务线程池，应用退出时调用。"""
@@ -99,7 +96,6 @@ class ApplicationService:
                 "connected": True,
                 "service": "python-application-service",
                 "active_tasks": sum(task.state in {"queued", "running"} for task in self._tasks.values()),
-                "last_manifest_path": str(self._last_manifest_path) if self._last_manifest_path else None,
             }
 
     def start_scan(self, options: dict[str, Any] | str) -> dict[str, Any]:
@@ -126,9 +122,11 @@ class ApplicationService:
             if task.cancel_event.is_set():
                 LOGGER.info("扫描任务已取消：%s", task.task_id)
                 return {"cancelled": True, "root": str(root), "results": []}
+
             scan_id = _new_id("scan")
             with self._lock:
                 self._scans[scan_id] = {"root": root, "recursive": recursive, "results": results}
+                self._trim_retained_state()
             LOGGER.info("扫描完成：%s，共 %s 个视频", root, len(results))
             return {
                 "scan_id": scan_id,
@@ -140,6 +138,55 @@ class ApplicationService:
 
         return self._submit("scan", work)
 
+    def execute_organize(self, options: dict[str, Any]) -> dict[str, Any]:
+        """按当前设置直接整理已扫描目录，不创建预演或操作记录。"""
+
+        payload = _options_dict(options)
+        scan_id = str(payload.get("scan_id", ""))
+        with self._lock:
+            scan = self._scans.get(scan_id)
+        if scan is None:
+            raise ValueError(f"扫描结果不存在或已失效：{scan_id}")
+
+        mode = str(payload.get("mode", "copy"))
+        if mode not in {"copy", "move", "prefix"}:
+            raise ValueError(f"不支持的整理方式：{mode}")
+        conflict = ConflictPolicy(str(payload.get("conflict_policy", "suffix")))
+        with_sidecars = bool(payload.get("with_sidecars", False))
+        root = scan["root"]
+
+        with self._lock:
+            if root in self._organizing_roots:
+                raise RuntimeError(f"该目录已有整理任务正在执行：{root}")
+            self._organizing_roots.add(root)
+
+        LOGGER.info("提交直接整理任务：目录=%s，方式=%s，冲突策略=%s", root, mode, conflict.value)
+
+        def work(task: _Task) -> dict[str, Any]:
+            try:
+                # 在后台任务开始时即时构建计划，缩短扫描与文件操作之间的时间差。
+                plan = _build_web_organize_plan(
+                    scan["results"],
+                    root=root,
+                    mode=mode,
+                    conflict_policy=conflict,
+                    with_sidecars=with_sidecars,
+                )
+                records = execute_core_plan(
+                    plan,
+                    apply=True,
+                    cancel_event=task.cancel_event,
+                    on_progress=lambda completed, total, item: self._update_progress(
+                        task, completed, total, f"正在处理：{item.source.name}"
+                    ),
+                )
+                return _organize_result_to_dto(records, plan=plan, cancelled=task.cancel_event.is_set())
+            finally:
+                with self._lock:
+                    self._organizing_roots.discard(root)
+
+        return self._submit("organize", work)
+
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """读取任务状态。"""
 
@@ -150,7 +197,7 @@ class ApplicationService:
         return task.snapshot()
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
-        """请求取消任务；正在进行的单个文件操作不会被强制中断。"""
+        """请求取消任务；当前单个文件完成后才会停止。"""
 
         with self._lock:
             task = self._tasks.get(str(task_id))
@@ -163,49 +210,8 @@ class ApplicationService:
         LOGGER.info("已请求取消任务：%s", task_id)
         return task.snapshot()
 
-    def build_plan(self, options: dict[str, Any]) -> dict[str, Any]:
-        """根据扫描结果生成预演计划，不执行任何文件操作。"""
-
-        payload = _options_dict(options)
-        scan_id = str(payload.get("scan_id", ""))
-        with self._lock:
-            scan = self._scans.get(scan_id)
-        if scan is None:
-            raise ValueError(f"扫描结果不存在或已失效：{scan_id}")
-
-        mode = str(payload.get("mode", "copy"))
-        conflict = ConflictPolicy(str(payload.get("conflict_policy", "suffix")))
-        plan = build_core_plan(
-            scan["results"],
-            root=scan["root"],
-            mode=mode,
-            conflict_policy=conflict,
-            name_template=_optional_text(payload.get("name_template")),
-            dir_template=_optional_text(payload.get("dir_template")),
-            with_sidecars=bool(payload.get("with_sidecars", False)),
-        )
-        plan_id = _new_id("plan")
-        with self._lock:
-            self._plans[plan_id] = {"root": scan["root"], "operation": mode, "items": plan}
-        result = _plan_to_dto(plan_id, scan_id, scan["root"], mode, plan)
-        LOGGER.info("生成整理计划：%s，可处理 %s 项，跳过 %s 项", plan_id, result["actionable_count"], result["skipped_count"])
-        return result
-
-    def execute_plan(self, options: dict[str, Any]) -> dict[str, Any]:
-        """创建已确认的整理执行任务并返回 ``task_id``。"""
-
-        payload = _options_dict(options)
-        plan_id = str(payload.get("plan_id", ""))
-        if payload.get("confirmed") is not True:
-            raise PermissionError("执行整理前必须明确确认计划")
-        with self._lock:
-            stored = self._plans.get(plan_id)
-        if stored is None:
-            raise ValueError(f"整理计划不存在或已失效：{plan_id}")
-        return self._submit("execution", lambda task: self._execute_stored_plan(task, plan_id, stored))
-
     def export_report(self, options: dict[str, Any]) -> dict[str, Any]:
-        """导出已完成扫描的 CSV/JSON 报告。"""
+        """导出已完成扫描的 CSV 或 JSON 识别报告。"""
 
         payload = _options_dict(options)
         scan_id = str(payload.get("scan_id", ""))
@@ -219,74 +225,6 @@ class ApplicationService:
         write_report(scan["results"], output, fmt=fmt)
         LOGGER.info("报告已导出：%s", output)
         return {"path": str(output.resolve()), "format": fmt, "count": len(scan["results"])}
-
-    def load_manifest(self, options: dict[str, Any] | str) -> dict[str, Any]:
-        """读取 manifest 并返回可撤销预览。"""
-
-        payload = _options_dict(options)
-        path = _require_file(payload.get("manifest_path") or payload.get("path"))
-        manifest = read_manifest(path)
-        undo_plan = build_undo_plan(manifest.records)
-        LOGGER.info("载入操作记录：%s，共 %s 条记录", path, len(manifest.records))
-        return {
-            "manifest_path": str(path),
-            "manifest": manifest.to_dict(),
-            "undo": _plan_to_dto("", "", manifest.root, "undo", undo_plan),
-        }
-
-    def preview_undo(self, options: dict[str, Any] | str) -> dict[str, Any]:
-        """读取撤销计划，保留独立方法供前端显式调用。"""
-
-        return self.load_manifest(options)
-
-    def execute_undo(self, options: dict[str, Any]) -> dict[str, Any]:
-        """创建已确认的撤销任务。"""
-
-        payload = _options_dict(options)
-        path = _require_file(payload.get("manifest_path") or payload.get("path"))
-        if payload.get("confirmed") is not True:
-            raise PermissionError("执行撤销前必须明确确认计划")
-        manifest = read_manifest(path)
-        plan = build_undo_plan(manifest.records)
-        on_missing = str(payload.get("on_missing", "error"))
-        if on_missing == "skip":
-            plan = [item for item in plan if item.source.exists()]
-        else:
-            missing = next((item.source for item in plan if not item.source.exists()), None)
-            if missing is not None:
-                raise FileNotFoundError(f"撤销源文件不存在：{missing}")
-        stored = {"root": manifest.root, "operation": "undo", "items": plan}
-        return self._submit("undo", lambda task: self._execute_stored_plan(task, "", stored))
-
-    def _execute_stored_plan(self, task: _Task, plan_id: str, stored: dict[str, Any]) -> dict[str, Any]:
-        """执行计划、写入 manifest 并返回前端 DTO。"""
-
-        plan: list[PlanItem] = stored["items"]
-        records = execute_core_plan(
-            plan,
-            apply=True,
-            cancel_event=task.cancel_event,
-            on_progress=lambda completed, total, item: self._update_progress(
-                task, completed, total, f"正在处理：{item.source.name}"
-            ),
-        )
-        manifest = create_manifest(stored["root"], stored["operation"], records)
-        manifest_path = write_manifest(manifest)
-        with self._lock:
-            self._last_manifest_path = manifest_path
-        actionable_records = [record for record in records if record.action is not PlanAction.NONE]
-        success_count = sum(record.success for record in actionable_records)
-        failed_count = len(actionable_records) - success_count
-        skipped_count = len(records) - len(actionable_records)
-        LOGGER.info("整理任务完成：成功 %s 项，失败 %s 项，记录=%s", success_count, failed_count, manifest_path)
-        return {
-            "plan_id": plan_id,
-            "manifest_path": str(manifest_path),
-            "records": [_execution_record_to_dto(record) for record in records],
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "skipped_count": skipped_count,
-        }
 
     def _submit(self, kind: str, work: Callable[[_Task], dict[str, Any]]) -> dict[str, Any]:
         """提交线程池任务并返回轻量句柄。"""
@@ -308,15 +246,40 @@ class ApplicationService:
             with task.lock:
                 task.result = result
                 task.state = "cancelled" if task.cancel_event.is_set() else "completed"
-                task.message = "任务已取消" if task.state == "cancelled" else "任务完成"
+                task.message = "任务已取消，已返回部分结果" if task.state == "cancelled" else "任务完成"
                 task.finished_at = datetime.now().isoformat(timespec="seconds")
-        except Exception as exc:  # 单个 API 任务失败必须转为结构化错误
+        except Exception as exc:
             LOGGER.exception("任务失败：%s", task.task_id)
             with task.lock:
                 task.state = "failed"
                 task.error = f"{type(exc).__name__}: {exc}"
                 task.message = "任务失败"
                 task.finished_at = datetime.now().isoformat(timespec="seconds")
+        finally:
+            with self._lock:
+                self._trim_retained_state()
+
+    def _trim_retained_state(self) -> None:
+        """限制会话内任务和扫描缓存，避免长期运行持续占用内存。
+
+        调用方必须已持有 ``self._lock``；活跃任务不会被移除，以免前端轮询丢失状态。
+        """
+
+        while len(self._tasks) > MAX_RETAINED_TASKS:
+            removable = next(
+                (
+                    task_id
+                    for task_id, task in self._tasks.items()
+                    if task.snapshot()["state"] in {"completed", "failed", "cancelled"}
+                ),
+                None,
+            )
+            if removable is None:
+                break
+            self._tasks.pop(removable)
+        while len(self._scans) > MAX_RETAINED_SCANS:
+            oldest_scan_id = next(iter(self._scans))
+            self._scans.pop(oldest_scan_id)
 
     @staticmethod
     def _update_progress(task: _Task, completed: int, total: int, message: str) -> None:
@@ -328,11 +291,70 @@ class ApplicationService:
             task.message = message
 
 
+def _build_web_organize_plan(
+    results: list[ScanResult],
+    *,
+    root: Path,
+    mode: str,
+    conflict_policy: ConflictPolicy,
+    with_sidecars: bool,
+) -> list[PlanItem]:
+    """构建 Web 专用计划，未知、冲突和错误结果永不自动整理。"""
+
+    skipped: list[PlanItem] = []
+    eligible: list[ScanResult] = []
+    for result in results:
+        if result.error or result.mode in {ColorMode.UNKNOWN, ColorMode.ERROR}:
+            skipped.append(PlanItem(result.path, None, PlanAction.NONE, result, skipped=True, reason="识别结果无法确认，未自动整理"))
+        elif result.evidence.primary_source == "conflict":
+            skipped.append(PlanItem(result.path, None, PlanAction.NONE, result, skipped=True, reason="元数据证据冲突，未自动整理"))
+        else:
+            eligible.append(result)
+
+    # core 层仍服务于 CLI/GUI；Web 端仅以已确认结果调用它，避免改变其他入口语义。
+    actionable = build_core_plan(
+        eligible,
+        root=root,
+        mode=mode,
+        conflict_policy=conflict_policy,
+        with_sidecars=with_sidecars,
+    )
+    return [*actionable, *skipped]
+
+
+def _organize_result_to_dto(
+    records: list[ExecutionRecord],
+    *,
+    plan: list[PlanItem],
+    cancelled: bool,
+) -> dict[str, Any]:
+    """汇总直接整理结果，确保取消任务也能展示已经发生的文件操作。"""
+
+    # executor 会为 skipped 项保留原 action；因此须结合原计划统计，不能仅看记录 action。
+    completed_items = plan[: len(records)]
+    actionable_pairs = [
+        (item, record)
+        for item, record in zip(completed_items, records, strict=True)
+        if not item.skipped and item.action is not PlanAction.NONE
+    ]
+    success_count = sum(record.success for _, record in actionable_pairs)
+    failed_count = len(actionable_pairs) - success_count
+    skipped_count = len(records) - len(actionable_pairs)
+    LOGGER.info("整理任务结束：成功 %s 项，跳过 %s 项，失败 %s 项，取消=%s", success_count, skipped_count, failed_count, cancelled)
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "cancelled": cancelled,
+        "records": [_execution_record_to_dto(record) for record in records],
+    }
+
+
 def _options_dict(options: dict[str, Any] | str) -> dict[str, Any]:
     """统一字符串和对象两种桥接参数形式。"""
 
     if isinstance(options, str):
-        return {"directory": options, "path": options, "manifest_path": options}
+        return {"directory": options}
     if not isinstance(options, dict):
         raise TypeError("API 参数必须是对象或字符串")
     return options
@@ -349,26 +371,8 @@ def _require_directory(value: Any) -> Path:
     return path
 
 
-def _require_file(value: Any) -> Path:
-    """校验并规范化文件路径。"""
-
-    if not value:
-        raise ValueError("必须提供文件路径")
-    path = Path(str(value)).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"文件不存在：{path}")
-    return path
-
-
-def _optional_text(value: Any) -> str | None:
-    """将空字符串归一化为 None。"""
-
-    text = str(value).strip() if value is not None else ""
-    return text or None
-
-
 def _new_id(prefix: str) -> str:
-    """生成前端可读的短任务/资源 ID。"""
+    """生成前端可读的任务或资源 ID。"""
 
     return f"{prefix}_{uuid.uuid4().hex}"
 
@@ -383,7 +387,7 @@ def _summary_to_dto(results: list[ScanResult]) -> dict[str, Any]:
 
 
 def _scan_result_to_dto(result: ScanResult, root: Path) -> dict[str, Any]:
-    """转换扫描结果，补齐 Web 表格所需的展示字段。"""
+    """转换扫描结果，补齐 Web 表格所需展示字段。"""
 
     try:
         relative_parent = result.path.parent.resolve().relative_to(root.resolve())
@@ -395,7 +399,7 @@ def _scan_result_to_dto(result: ScanResult, root: Path) -> dict[str, Any]:
         status_label = "识别失败"
     elif result.mode is ColorMode.UNKNOWN or result.evidence.primary_source == "conflict":
         status = "review"
-        status_label = "待确认"
+        status_label = "不自动整理"
     else:
         status = "ready"
         status_label = "已识别"
@@ -441,64 +445,6 @@ def _confidence_label(confidence: str) -> str:
     return {"high": "高置信度", "medium": "中置信度", "low": "低置信度"}.get(confidence, "待确认")
 
 
-def _plan_to_dto(plan_id: str, scan_id: str, root: Path, operation: str, plan: list[PlanItem]) -> dict[str, Any]:
-    """转换整理计划并计算前端摘要。"""
-
-    items = [_plan_item_to_dto(item, root) for item in plan]
-    actionable = [item for item in plan if not item.skipped and item.action is not PlanAction.NONE and item.target]
-    skipped = [item for item in plan if item.skipped or item.action is PlanAction.NONE]
-    estimated_bytes = sum(item.scan_result.size for item in actionable if item.action is PlanAction.COPY)
-    return {
-        "plan_id": plan_id,
-        "scan_id": scan_id,
-        "operation": operation,
-        "root": str(root),
-        "items": items,
-        "actionable_count": len(actionable),
-        "skipped_count": len(skipped),
-        "estimated_bytes": estimated_bytes,
-        "has_conflicts": any(item["status"] == "conflict" for item in items),
-        "summary": _plan_summary(plan),
-    }
-
-
-def _plan_item_to_dto(item: PlanItem, root: Path) -> dict[str, Any]:
-    """转换单个计划项。"""
-
-    if item.skipped:
-        status = (
-            "conflict"
-            if item.reason and ("冲突" in item.reason or "已存在" in item.reason)
-            else "skip"
-        )
-    else:
-        status = "ready"
-    return {
-        "source": str(item.source),
-        "target": str(item.target) if item.target else None,
-        "name": item.source.name,
-        "action": item.action.value,
-        "mode": item.scan_result.mode.value,
-        "mode_label": item.scan_result.mode.label,
-        "status": status,
-        "skipped": item.skipped,
-        "reason": item.reason,
-        "size": item.scan_result.size,
-        "source_relative": _relative_path(item.source, root),
-        "target_relative": _relative_path(item.target, root) if item.target else None,
-    }
-
-
-def _plan_summary(plan: list[PlanItem]) -> dict[str, int]:
-    """按色彩模式统计可执行项和跳过项。"""
-
-    summary = {mode.value: 0 for mode in ColorMode}
-    for item in plan:
-        if not item.skipped and item.action is not PlanAction.NONE:
-            summary[item.scan_result.mode.value] += 1
-    return summary
-
-
 def _execution_record_to_dto(record: ExecutionRecord) -> dict[str, Any]:
     """转换执行结果。"""
 
@@ -513,17 +459,6 @@ def _execution_record_to_dto(record: ExecutionRecord) -> dict[str, Any]:
         "source_size": record.source_size,
         "target_size": record.target_size,
     }
-
-
-def _relative_path(path: Path | None, root: Path) -> str | None:
-    """返回稳定的相对路径，越界时保留绝对路径以便暴露安全问题。"""
-
-    if path is None:
-        return None
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
 
 
 def _default_report_path(root: Path, fmt: str) -> Path:

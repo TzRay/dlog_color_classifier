@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
-from dji_color_classifier.web_app import _extract_dropped_path, bind_dom_events
+from dji_color_classifier.web_app import DesktopBridge, _extract_dropped_path, bind_dom_events
 
 
 class _FakeEventHook:
@@ -44,6 +44,15 @@ class _FakeDomEventHandler:
         self.callback = callback
 
 
+class _FakeService:
+    """验证桥接方法转发的最小服务替身。"""
+
+    def execute_organize(self, options):  # noqa: ANN001
+        """记录直接整理入参。"""
+
+        return {"received": options}
+
+
 def test_extract_dropped_path_from_pywebview_event() -> None:
     """优先读取 pywebview 提供的完整桌面路径。"""
 
@@ -78,3 +87,14 @@ def test_bind_dom_events_forwards_full_path_to_frontend(monkeypatch) -> None:  #
     assert len(window.evaluated_scripts) == 1
     assert "djiColorDeskHandleDrop" in window.evaluated_scripts[0]
     assert "D:" in window.evaluated_scripts[0]
+
+
+def test_desktop_bridge_exposes_direct_organize_only() -> None:
+    """桌面桥接应暴露直接整理接口，不再暴露 Web 撤销流程。"""
+
+    bridge = DesktopBridge(_FakeService())
+    payload = {"scan_id": "scan_1", "mode": "copy"}
+    assert bridge.execute_organize(payload) == {"received": payload}
+    assert not hasattr(bridge, "build_plan")
+    assert not hasattr(bridge, "execute_plan")
+    assert not hasattr(bridge, "execute_undo")

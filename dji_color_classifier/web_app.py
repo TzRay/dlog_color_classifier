@@ -52,45 +52,20 @@ class DesktopBridge:
 
         return self.service.cancel_task(task_id)
 
-    def build_plan(self, options: dict[str, Any]) -> dict[str, Any]:
-        """生成整理计划。"""
+    def execute_organize(self, options: dict[str, Any]) -> dict[str, Any]:
+        """直接提交整理任务。"""
 
-        return self.service.build_plan(options)
-
-    def execute_plan(self, options: dict[str, Any]) -> dict[str, Any]:
-        """提交整理任务。"""
-
-        return self.service.execute_plan(options)
+        return self.service.execute_organize(options)
 
     def export_report(self, options: dict[str, Any]) -> dict[str, Any]:
         """导出识别报告。"""
 
         return self.service.export_report(options)
 
-    def load_manifest(self, options: dict[str, Any] | str) -> dict[str, Any]:
-        """载入操作记录。"""
-
-        return self.service.load_manifest(options)
-
-    def preview_undo(self, options: dict[str, Any] | str) -> dict[str, Any]:
-        """预览撤销计划。"""
-
-        return self.service.preview_undo(options)
-
-    def execute_undo(self, options: dict[str, Any]) -> dict[str, Any]:
-        """提交撤销任务。"""
-
-        return self.service.execute_undo(options)
-
     def choose_directory(self) -> str | None:
         """打开系统目录选择器。"""
 
         return self._choose_file_dialog("folder")
-
-    def choose_manifest(self) -> str | None:
-        """打开 manifest 文件选择器。"""
-
-        return self._choose_file_dialog("manifest")
 
     def choose_report_path(self, fmt: str = "csv") -> str | None:
         """打开报告保存对话框。"""
@@ -107,12 +82,6 @@ class DesktopBridge:
 
             if kind == "folder":
                 selected = self.window.create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=False)
-            elif kind == "manifest":
-                selected = self.window.create_file_dialog(
-                    webview.OPEN_DIALOG,
-                    allow_multiple=False,
-                    file_types=("JSON 文件 (*.json)",),
-                )
             else:
                 suffix = ".json" if fmt == "json" else ".csv"
                 selected = self.window.create_file_dialog(
