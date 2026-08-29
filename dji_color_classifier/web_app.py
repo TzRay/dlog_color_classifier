@@ -150,9 +150,11 @@ def bind_dom_events(window: Any) -> None:
         except Exception as exc:
             LOGGER.exception("通知前端处理拖入路径失败：%s", exc)
 
-    # prevent_default 和 stop_propagation 是 pywebview 官方拖拽事件示例所需的
-    # 参数；dragover 不读取文件，只负责让操作系统允许 drop 事件继续产生。
+    # pywebview 官方示例要求同时拦截 dragenter、dragstart 和 dragover；缺少
+    # dragstart 时，部分 Windows WebView2 环境不会把外部目录继续派发为 drop。
+    # dragover 不读取文件，只负责让操作系统允许 drop 事件继续产生。
     window.dom.document.events.dragenter += DOMEventHandler(prevent_drag_default, True, True)
+    window.dom.document.events.dragstart += DOMEventHandler(prevent_drag_default, True, True)
     window.dom.document.events.dragover += DOMEventHandler(prevent_drag_default, True, True, debounce=500)
     window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
 

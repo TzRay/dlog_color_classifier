@@ -25,6 +25,7 @@ class _FakeWindow:
     def __init__(self) -> None:
         events = SimpleNamespace(
             dragenter=_FakeEventHook(),
+            dragstart=_FakeEventHook(),
             dragover=_FakeEventHook(),
             drop=_FakeEventHook(),
         )
@@ -81,6 +82,7 @@ def test_bind_dom_events_forwards_full_path_to_frontend(monkeypatch) -> None:  #
     window = _FakeWindow()
     bind_dom_events(window)
 
+    assert len(window.dom.document.events.dragstart.handlers) == 1
     assert len(window.dom.document.events.drop.handlers) == 1
     handler = window.dom.document.events.drop.handlers[0]
     handler.callback({"dataTransfer": {"files": [{"pywebviewFullPath": r"D:\素材"}]}})

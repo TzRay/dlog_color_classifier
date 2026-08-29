@@ -342,7 +342,12 @@
     document.addEventListener("dragover", (event) => event.preventDefault());
     document.addEventListener("drop", (event) => {
       event.preventDefault();
-      if (!state.api) showToast("无法读取拖入目录", "普通浏览器无法提供本地目录路径，请使用 dji-color-web。", true);
+      const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      // 少数 pywebview 渲染器也会把完整路径同步到 JavaScript；优先直接使用，
+      // 其余渲染器仍由 Python DOM 事件通过 djiColorDeskHandleDrop 转发。
+      const path = dropped && (dropped.pywebviewFullPath || dropped.path);
+      if (path) handleDroppedDirectory(path);
+      else if (!state.api) showToast("无法读取拖入目录", "普通浏览器无法提供本地目录路径，请使用 dji-color-web。", true);
     });
   }
 

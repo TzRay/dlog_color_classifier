@@ -33,6 +33,7 @@ def test_runtime_script_uses_direct_organize_api_and_drop_bridge() -> None:
     script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
     assert 'callApi("execute_organize"' in script
     assert "djiColorDeskHandleDrop" in script
+    assert "dropped.pywebviewFullPath || dropped.path" in script
     for removed in ("build_plan", "execute_plan", "load_manifest", "execute_undo", "preview_undo"):
         assert removed not in script
 
