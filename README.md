@@ -1,72 +1,57 @@
 # DJI Color Classifier
 
-DJI 视频色彩模式识别与整理工具。读取 MP4/MOV 元数据，识别 `D-Log`、`D-Log2`、普通 `709` 和 `Rec.2100 HLG（HDR）`，无需解码画面，也不会修改视频内部数据。
+用于识别和整理 DJI 视频的色彩模式，支持 D-Log、D-Log2、普通 709 和 HLG HDR。
 
-当前正式版：`2.0.0`
+程序只读取视频信息，不分析画面，也不会修改视频内部数据。
 
 ## 下载
 
-从 [Releases](https://github.com/TzRay/dlog_color_classifier/releases/latest) 下载对应版本：
+前往 [Releases](https://github.com/TzRay/dlog_color_classifier/releases/latest)，下载与你的电脑对应的压缩包：
 
-- Windows x64：`dji-color-web-windows-x64.zip`
-- macOS Apple Silicon：`dji-color-web-macos-arm64.zip`
+- Windows 电脑：`dji-color-web-windows-x64.zip`
+- Apple 芯片 Mac：`dji-color-web-macos-arm64.zip`
 
-解压后直接运行 `dji-color-web`。官方发布仅提供 Web 桌面版，不再提供 CLI 或 Qt GUI 安装包。
+下载后解压，运行其中的 `dji-color-web` 即可，无需安装 Python。
 
-## 功能
+## 使用方法
 
-- 选择或拖入素材文件夹，扫描 MP4、MOV、M4V。
-- 按色彩模式统计、筛选和搜索文件。
-- 导出 CSV 或 JSON 报告。
-- 添加文件名前缀，或将素材复制、移动到分类目录。
-- 可递归扫描子目录，并同步处理 `.srt`、`.lrf`、`.thm`、`.jpg`、`.xml` 等同名伴随文件。
-- 支持跳过、标记失败、自动追加序号三种冲突策略。
+1. 打开程序。
+2. 点击“选择素材文件夹”，或把文件夹直接拖入窗口。
+3. 等待扫描完成，查看各种色彩模式的数量和文件明细。
+4. 选择一种整理方式并确认设置。
+5. 点击执行；需要留档时可导出 CSV 或 JSON 报告。
 
-## 使用
+## 整理方式
 
-1. 选择或拖入 DJI 素材文件夹。
-2. 等待扫描完成，核对识别统计和文件明细。
-3. 选择复制、移动或添加前缀。
-4. 确认伴随文件、冲突策略和目标模板后执行。
-5. 需要留档时导出 CSV 或 JSON 报告。
+- **复制到分类目录**：保留原文件并生成分类副本，建议首次使用。
+- **移动到分类目录**：把原文件移动到对应的色彩模式文件夹。
+- **添加文件名前缀**：在文件名前添加 `dlog_`、`dlog2_` 或 `hlg_`。
 
-Web 工作台会直接执行整理，不生成 manifest，也不提供撤销。首次使用建议选择“复制到分类目录”，或提前备份素材。
+程序也可以同步整理同名的字幕、代理文件、照片等伴随文件。
 
-无法确认、元数据冲突或读取失败的视频不会自动整理。
+## 使用前请注意
 
-## 识别依据
+- 移动和改名会直接改变原文件位置或名称，请先确认设置。
+- 当前版本不提供撤销功能，重要素材建议提前备份。
+- 无法确认、信息冲突或读取失败的视频不会被自动整理。
+- 目标位置已有同名文件时，可选择跳过、标记失败或自动追加序号。
 
-识别优先级如下：
+## 常见问题
 
-1. QuickTime `com.dji.camera.ColorGammaSxS` 明确标签。
-2. DJI `djmd` 中的 `ColorGammaSxS`：`22` 为 D-Log2，`2` 为 D-Log。
-3. 枚举缺失且 `record_mode == 8` 时，低置信度识别为普通 709。
+**文件夹拖入后没有反应？**
 
-标签冲突或证据不足时标记为“无法确认”。报告会保留证据来源、置信度和冲突说明。
+请确认运行的是下载并解压后的桌面程序，而不是在普通浏览器中打开网页。
 
-## 从源码运行
+**为什么有些视频显示“无法确认”？**
 
-需要 Python 3.10 或更高版本：
+视频中没有足够信息，或不同信息之间存在冲突。程序不会强行猜测，以免错误整理素材。
 
-```powershell
-python -m pip install -e ".[web,dev]"
-dji-color-web
-```
+**支持哪些视频？**
 
-运行检查：
+目前支持常见 DJI MP4、MOV、M4V 文件，但不能保证覆盖所有 DJI 机型和固件。
 
-```powershell
-python -m pytest -q tests
-python -m ruff check .
-```
+**Intel 芯片 Mac 可以运行吗？**
 
-CLI 和 Qt GUI 源码仍为兼容用途保留，但不属于官方发布产物。
+目前 macOS 正式版仅支持 Apple Silicon。
 
-## 限制
-
-- 目前不保证覆盖所有 DJI 机型和固件。
-- fragmented MP4（`moof/traf/trun`）暂不支持。
-- 普通浏览器无法获得拖入文件夹的完整本地路径，请运行桌面应用。
-- macOS 正式包目前仅提供 Apple Silicon 版本。
-
-更多信息见 [更新记录](CHANGELOG.md) 和 [技术说明](docs/technical-notes.md)。
+详细改动见 [更新记录](CHANGELOG.md)。
