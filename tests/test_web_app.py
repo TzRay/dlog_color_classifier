@@ -126,3 +126,14 @@ def test_desktop_bridge_exposes_direct_organize_only() -> None:
     assert not hasattr(bridge, "build_plan")
     assert not hasattr(bridge, "execute_plan")
     assert not hasattr(bridge, "execute_undo")
+
+
+def test_desktop_bridge_keeps_native_objects_out_of_javascript_api() -> None:
+    """服务和原生窗口必须保持私有，避免 pywebview 递归暴露原生对象。"""
+
+    bridge = DesktopBridge(_FakeService())
+    bridge.bind_window(object())
+
+    assert set(bridge.__dict__) == {"_service", "_window"}
+    assert not hasattr(bridge, "service")
+    assert not hasattr(bridge, "window")

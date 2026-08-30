@@ -26,43 +26,46 @@ class DesktopBridge:
     def __init__(self, service: ApplicationService) -> None:
         """创建桥接对象。"""
 
-        self.service = service
-        self.window: Any | None = None
+        # pywebview 会递归扫描 js_api 对象的所有公开属性。服务和窗口若使用公开
+        # 名称，会把原生 Window.native / AccessibilityObject 也当作 API 递归遍历，
+        # 在 Windows 上导致注入阶段栈溢出，并连带使拖放桥接无法稳定初始化。
+        self._service = service
+        self._window: Any | None = None
 
     def bind_window(self, window: Any) -> None:
         """绑定 pywebview 窗口，供选择目录/文件 API 使用。"""
 
-        self.window = window
+        self._window = window
 
     def get_state(self) -> dict[str, Any]:
         """返回服务状态。"""
 
-        return self.service.get_state()
+        return self._service.get_state()
 
     def start_scan(self, options: dict[str, Any] | str) -> dict[str, Any]:
         """提交扫描任务。"""
 
-        return self.service.start_scan(options)
+        return self._service.start_scan(options)
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """读取任务状态。"""
 
-        return self.service.get_task_status(task_id)
+        return self._service.get_task_status(task_id)
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         """取消后台任务。"""
 
-        return self.service.cancel_task(task_id)
+        return self._service.cancel_task(task_id)
 
     def execute_organize(self, options: dict[str, Any]) -> dict[str, Any]:
         """直接提交整理任务。"""
 
-        return self.service.execute_organize(options)
+        return self._service.execute_organize(options)
 
     def export_report(self, options: dict[str, Any]) -> dict[str, Any]:
         """导出识别报告。"""
 
-        return self.service.export_report(options)
+        return self._service.export_report(options)
 
     def choose_directory(self) -> str | None:
         """打开系统目录选择器。"""
@@ -77,16 +80,16 @@ class DesktopBridge:
     def _choose_file_dialog(self, kind: str, *, fmt: str = "csv") -> str | None:
         """统一处理 pywebview 文件对话框，并把取消转换为 None。"""
 
-        if self.window is None:
+        if self._window is None:
             raise RuntimeError("Web 窗口尚未就绪")
         try:
             import webview
 
             if kind == "folder":
-                selected = self.window.create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=False)
+                selected = self._window.create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=False)
             else:
                 suffix = ".json" if fmt == "json" else ".csv"
-                selected = self.window.create_file_dialog(
+                selected = self._window.create_file_dialog(
                     webview.SAVE_DIALOG,
                     save_filename=f"dji_color_report{suffix}",
                     file_types=("JSON 文件 (*.json)",) if fmt == "json" else ("CSV 文件 (*.csv)",),
