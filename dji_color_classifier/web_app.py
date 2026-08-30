@@ -233,9 +233,9 @@ def main(argv: list[str] | None = None) -> int:
             "DJI Color Desk · 素材整理工作台",
             url=html_path.as_uri(),
             js_api=bridge,
-            width=1440,
-            height=960,
-            min_size=(1040, 720),
+            width=1240,
+            height=820,
+            min_size=(820, 600),
             resizable=True,
         )
         bridge.bind_window(window)

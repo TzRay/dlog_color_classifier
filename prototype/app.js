@@ -34,6 +34,7 @@
     submitting: false,
     needsRescan: false,
     toastTimer: 0,
+    dragDepth: 0,
   };
 
   function bridgeError(error) {
@@ -87,9 +88,31 @@
     $$(".mode-option").forEach((button) => { button.disabled = busy; });
     $("#cancelTask").hidden = !state.activeTask;
     $("#cancelTask").disabled = !state.activeTask;
+    $("#taskProgress").hidden = !busy;
     $("#executeOrganize").textContent = busy && state.activeKind === "organize"
       ? "正在整理…"
       : state.needsRescan ? "请重新识别后再整理" : "执行整理";
+  }
+
+  /**
+   * 在窄窗口中打开或关闭整理抽屉；宽窗口仍由 CSS 保持双栏布局。
+   */
+  function setOrganizerOpen(open) {
+    const panel = $("#organizePanel");
+    panel.classList.toggle("open", open);
+    $("#toggleOrganizer").setAttribute("aria-expanded", String(open));
+    refreshBackdrop();
+  }
+
+  /** 根据当前浮层统一维护遮罩，避免多个入口各自留下不可点击的遮罩。 */
+  function refreshBackdrop() {
+    const visible = $("#organizePanel").classList.contains("open") || !$("#outcomePanel").hidden;
+    $("#organizerBackdrop").classList.toggle("visible", visible);
+  }
+
+  function closeOutcome() {
+    $("#outcomePanel").hidden = true;
+    refreshBackdrop();
   }
 
   function countFor(mode) {
@@ -102,7 +125,7 @@
     ["all", "dlog", "dlog2", "rec709", "rec2100_hlg", "unknown"].forEach((mode) => {
       const count = countFor(mode);
       $$("[data-filter]").filter((element) => element.dataset.filter === mode).forEach((element) => {
-        const value = element.querySelector(".summary-value, span:last-child");
+        const value = element.querySelector(".summary-value");
         if (value) value.textContent = String(count);
       });
     });
@@ -176,6 +199,8 @@
   function renderOutcome(result, taskState) {
     const panel = $("#outcomePanel");
     panel.hidden = false;
+    setOrganizerOpen(false);
+    refreshBackdrop();
     $("#successCount").textContent = String(result.success_count || 0);
     $("#skippedCount").textContent = String(result.skipped_count || 0);
     $("#failedCount").textContent = String(result.failed_count || 0);
@@ -226,8 +251,9 @@
     state.needsRescan = false;
     $("#searchInput").value = "";
     $("#folderPath").textContent = selectedRoot;
+    $("#folderPath").title = selectedRoot;
     $("#folderDetail").textContent = "正在准备识别…";
-    $("#outcomePanel").hidden = true;
+    closeOutcome();
     updateSummary();
     setFilter("all");
     state.activeKind = "scan";
@@ -245,6 +271,7 @@
         state.scanId = result.scan_id;
         state.files = result.results || [];
         $("#folderPath").textContent = result.root || selectedRoot;
+        $("#folderPath").title = result.root || selectedRoot;
         $("#folderDetail").textContent = `${result.recursive ? "包含子文件夹" : "仅当前文件夹"} · 识别完成`;
         updateSummary();
         renderResults();
@@ -321,9 +348,8 @@
     }
   }
 
-  async function exportReport() {
+  async function exportReport(format) {
     if (!state.scanId || isBusy()) return;
-    const format = window.confirm("确定导出 JSON 报告吗？点击“取消”将导出 CSV 报告。") ? "json" : "csv";
     // 保存对话框和报告写入期间保持单任务状态，避免扫描结果同时被替换。
     state.submitting = true;
     refreshControls();
@@ -337,6 +363,36 @@
     } finally {
       state.submitting = false;
       refreshControls();
+    }
+  }
+
+  function openExportDialog() {
+    if (!state.scanId || isBusy()) return;
+    $("#exportDialog").showModal();
+  }
+
+  /** 桌面快捷键只覆盖高频、无破坏性的入口。 */
+  function handleShortcut(event) {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      void chooseFolder();
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      $("#searchInput").focus();
+      $("#searchInput").select();
+      return;
+    }
+    if (event.key === "F5" && state.root && !isBusy()) {
+      event.preventDefault();
+      void startScan(state.root);
+      return;
+    }
+    if (event.key === "Escape") {
+      setOrganizerOpen(false);
+      closeOutcome();
     }
   }
 
@@ -361,7 +417,20 @@
     $("#rescanFolder").addEventListener("click", () => startScan(state.root));
     $("#cancelTask").addEventListener("click", cancelActiveTask);
     $("#executeOrganize").addEventListener("click", executeOrganize);
-    $("#exportReport").addEventListener("click", exportReport);
+    $("#exportReport").addEventListener("click", openExportDialog);
+    $("#cancelExport").addEventListener("click", () => $("#exportDialog").close());
+    $("#confirmExport").addEventListener("click", () => {
+      const selected = document.querySelector('input[name="exportFormat"]:checked');
+      $("#exportDialog").close();
+      void exportReport(selected ? selected.value : "csv");
+    });
+    $("#toggleOrganizer").addEventListener("click", () => setOrganizerOpen(true));
+    $("#closeOrganizer").addEventListener("click", () => setOrganizerOpen(false));
+    $("#closeOutcome").addEventListener("click", closeOutcome);
+    $("#organizerBackdrop").addEventListener("click", () => {
+      setOrganizerOpen(false);
+      closeOutcome();
+    });
     $$(".mode-option").forEach((button) => button.addEventListener("click", () => {
       state.mode = button.dataset.mode;
       $$(".mode-option").forEach((option) => {
@@ -373,15 +442,33 @@
     $("#recursiveToggle").addEventListener("change", () => {
       if (state.root && !isBusy()) void startScan(state.root);
     });
+    document.addEventListener("keydown", handleShortcut);
+    document.addEventListener("dragenter", (event) => {
+      const types = Array.from((event.dataTransfer && event.dataTransfer.types) || []);
+      if (!types.includes("Files")) return;
+      event.preventDefault();
+      state.dragDepth += 1;
+      $("#dragOverlay").classList.add("visible");
+    });
     document.addEventListener("dragover", (event) => event.preventDefault());
+    document.addEventListener("dragleave", () => {
+      state.dragDepth = Math.max(0, state.dragDepth - 1);
+      if (!state.dragDepth) $("#dragOverlay").classList.remove("visible");
+    });
     document.addEventListener("drop", (event) => {
       event.preventDefault();
+      state.dragDepth = 0;
+      $("#dragOverlay").classList.remove("visible");
       const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
       // 少数 pywebview 渲染器也会把完整路径同步到 JavaScript；优先直接使用，
       // 其余渲染器仍由 Python DOM 事件通过 djiColorDeskHandleDrop 转发。
       const path = dropped && (dropped.pywebviewFullPath || dropped.path);
       if (path) handleDroppedDirectory(path);
       else if (!state.api) showToast("无法读取拖入目录", "普通浏览器无法提供本地目录路径，请使用 dji-color-web。", true);
+    });
+    window.addEventListener("resize", () => {
+      // 从抽屉断点恢复到双栏时立即清理遮罩，避免它挡住宽窗口工作区。
+      if (window.innerWidth > 1040) setOrganizerOpen(false);
     });
   }
 

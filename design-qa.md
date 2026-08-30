@@ -44,7 +44,12 @@ GUI 面向“识别速度快、功能简单”的使用场景，不再采用侧�
 
 ## Web 工作台验收
 
-- `prototype/index.html` 保留单页工作台布局，新增 HLG HDR 统计卡片和筛选项。
+- `prototype/index.html` 使用固定高度应用壳，页面根节点禁止滚动；表格与整理设置在各自区域内滚动。
+- 默认窗口为 1240 × 820，最小窗口为 820 × 600；低于 1040px 时整理设置转换为右侧抽屉。
+- 窗口高度低于 700px 时隐藏低优先级说明并收紧间距，核心表格和操作按钮仍保持可见。
+- 六项统计同时承担筛选功能，不再重复显示第二套筛选按钮；表头在表格滚动时保持固定。
+- 报告格式使用应用内对话框选择，不再使用浏览器 `confirm`；支持 Ctrl+O、Ctrl+F 和 F5 快捷键。
+- 页面跟随系统明暗主题，并提供可见焦点、减少动态效果、任务进度和拖放遮罩反馈。
 - 页面直接打开时显示“等待本地服务”空态，不伪造扫描结果；由 `dji-color-web` 启动时通过 pywebview bridge 连接 Python 核心。
 - 选择目录后使用 `task_id` 轮询扫描状态；扫描完成后使用真实 DTO 渲染结果和模式统计。
 - Web 工作台只保留扫描、直接整理和报告导出，不生成预演、manifest 或撤销记录；CLI 与原生 GUI 继续提供完整安全流程。
@@ -54,6 +59,6 @@ GUI 面向“识别速度快、功能简单”的使用场景，不再采用侧�
 - Web 服务层回归测试覆盖扫描、直接整理、取消、关闭、冲突统计、伴随文件策略和目录互斥。
 - 桌面 Web 拖拽由 pywebview Python DOM `drop` 事件读取 `pywebviewFullPath` 后转发给前端；普通浏览器仅显示本地路径限制提示。
 
-浏览器自动化备注：本机 `npx` 可用，但 Playwright CLI 依赖下载受到 npm registry/EACCES 环境限制；已完成 `node --check prototype/app.js`、Python 服务层验收和静态 DOM/源码检查，未伪造浏览器截图结果。
+验收要求包括 `node --check prototype/app.js`、Web 静态结构回归、Python 服务层测试、全量测试以及 GitHub Actions 跨平台构建。
 
 final result: passed

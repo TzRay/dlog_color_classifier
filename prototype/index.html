@@ -3,154 +3,251 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <title>DJI Color Desk</title>
     <style>
-      :root { --bg: #f7f4f1; --surface: #fff; --ink: #25201e; --muted: #766d68; --line: #e7dfda; --accent: #ba443a; --accent-dark: #96342d; --mint: #edf6f0; --success: #387353; --warning: #9a6725; --danger: #b13f36; }
+      :root {
+        --bg: #f3f1ef; --surface: #fff; --surface-soft: #faf8f7; --ink: #25201e; --muted: #766d68;
+        --line: #e2dcd8; --accent: #ba443a; --accent-dark: #96342d; --accent-soft: #fff1ef;
+        --mint: #edf6f0; --success: #387353; --warning: #9a6725; --danger: #b13f36;
+        --radius: 10px; --shadow: 0 12px 34px rgba(48, 38, 32, .14);
+      }
       * { box-sizing: border-box; }
-      body { min-width: 320px; margin: 0; color: var(--ink); background: var(--bg); font: 14px/1.5 system-ui, -apple-system, "Microsoft YaHei", sans-serif; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body { min-width: 320px; margin: 0; color: var(--ink); background: var(--bg); font: 14px/1.45 "Segoe UI", system-ui, "Microsoft YaHei", sans-serif; }
       button, input, select { font: inherit; }
-      button { cursor: pointer; }
-      button:disabled { cursor: not-allowed; opacity: .58; }
-      .app { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 40px; }
-      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 74px; border-bottom: 1px solid var(--line); }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .04em; }
-      .brand-mark { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 8px; color: #fff; background: var(--accent); font-size: 12px; }
-      .top-actions { display: flex; align-items: center; gap: 10px; }
-      .connection { color: var(--muted); font-size: 12px; }
-      .connection-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #a99e98; }
-      .connection.connected .connection-dot { background: var(--success); }
-      .button-primary, .button-secondary, .text-button { border: 0; border-radius: 8px; font-weight: 700; }
-      .button-primary { padding: 11px 16px; color: #fff; background: var(--accent); }
-      .button-primary:hover:not(:disabled) { background: var(--accent-dark); }
-      .button-secondary { padding: 9px 13px; color: var(--ink); background: #fff; border: 1px solid var(--line); }
-      .text-button { padding: 5px 0; color: var(--accent-dark); background: transparent; }
-      .hero { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 36px 0 22px; }
+      button { cursor: default; }
+      button:disabled { cursor: not-allowed; opacity: .55; }
+      button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid rgba(186, 68, 58, .5); outline-offset: 2px; }
       h1, h2, p { margin: 0; }
-      h1 { font-size: clamp(26px, 4vw, 34px); line-height: 1.2; }
-      .hero-copy, .section-copy { margin-top: 7px; color: var(--muted); }
-      .folder-bar, .surface { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-      .folder-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; }
-      .folder-label, .section-kicker { color: var(--muted); font-size: 12px; }
-      .folder-path { overflow: hidden; margin-top: 2px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-      .folder-detail { margin-top: 2px; color: var(--muted); font-size: 12px; }
-      .folder-actions { display: flex; flex-shrink: 0; align-items: center; gap: 15px; }
-      .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
-      .summary-card { padding: 14px; text-align: left; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--surface); }
-      .summary-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(186, 68, 58, .1); }
-      .summary-value { margin-top: 4px; font-size: 25px; font-weight: 800; }
-      .summary-note { color: var(--muted); font-size: 12px; }
-      .workspace { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(310px, .8fr); gap: 18px; }
-      .surface { padding: 20px; }
-      .section-head, .result-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-      h2 { font-size: 18px; }
-      .filters { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 12px; }
-      .filter-pill { padding: 6px 10px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: #fff; }
-      .filter-pill.active { border-color: var(--accent); color: var(--accent-dark); background: #fff5f3; }
-      .search { width: 220px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
-      .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
-      table { width: 100%; min-width: 630px; border-collapse: collapse; }
-      th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--line); }
-      th { color: var(--muted); background: #fcfaf9; font-size: 12px; }
+      h1 { font-size: 18px; line-height: 1.2; }
+      h2 { font-size: 16px; }
+
+      /* 固定应用壳：窗口自身不滚动，中央工作区接管剩余空间。 */
+      .app { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; gap: 10px; width: 100%; height: 100%; padding: 0 16px 10px; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 54px; border-bottom: 1px solid var(--line); }
+      .brand { display: flex; min-width: 0; align-items: center; gap: 10px; }
+      .brand-mark { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 7px; color: #fff; background: var(--accent); font-size: 11px; font-weight: 800; }
+      .brand-copy { min-width: 0; }
+      .brand-copy p { overflow: hidden; margin-top: 1px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .top-actions, .folder-actions, .result-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+      .connection { color: var(--muted); font-size: 12px; white-space: nowrap; }
+      .connection-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #a99e98; }
+      .connection.connected .connection-dot { background: var(--success); }
+
+      .button-primary, .button-secondary, .text-button, .icon-button { border-radius: 7px; font-weight: 650; }
+      .button-primary { min-height: 34px; padding: 7px 13px; border: 1px solid var(--accent); color: #fff; background: var(--accent); }
+      .button-primary:hover:not(:disabled) { border-color: var(--accent-dark); background: var(--accent-dark); }
+      .button-secondary { min-height: 32px; padding: 6px 11px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
+      .button-secondary:hover:not(:disabled), .icon-button:hover:not(:disabled) { background: var(--surface-soft); border-color: #cbc2bd; }
+      .text-button { padding: 5px 4px; border: 0; color: var(--accent-dark); background: transparent; }
+      .icon-button { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); color: var(--ink); background: var(--surface); font-size: 18px; }
+
+      .folder-bar, .surface { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+      .folder-bar { position: relative; display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px; overflow: hidden; }
+      .folder-info { min-width: 0; }
+      .folder-label, .section-kicker { color: var(--muted); font-size: 11px; }
+      .folder-path { overflow: hidden; margin-top: 1px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .task-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; overflow: hidden; background: rgba(186, 68, 58, .12); }
+      .task-progress[hidden] { display: none; }
+      .task-progress span { display: block; width: 34%; height: 100%; background: var(--accent); animation: task-progress 1.1s ease-in-out infinite; }
+      @keyframes task-progress { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+
+      /* 统计同时承担筛选功能，避免页面再出现一套重复筛选器。 */
+      .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; min-width: 0; }
+      .summary-card { display: flex; min-width: 0; min-height: 45px; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; text-align: left; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); }
+      .summary-card:hover { background: var(--surface-soft); }
+      .summary-card.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+      .summary-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .summary-note { display: block; color: var(--muted); font-size: 10px; font-weight: 400; }
+      .summary-value { flex: 0 0 auto; font-size: 19px; font-weight: 750; font-variant-numeric: tabular-nums; }
+
+      .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 10px; min-width: 0; min-height: 0; }
+      .surface { min-width: 0; padding: 14px; }
+      .results-surface { display: flex; min-height: 0; flex-direction: column; }
+      .result-head, .section-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; }
+      .section-copy { overflow: hidden; max-width: 58vw; margin-top: 2px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .search { width: 220px; max-width: 35vw; min-height: 32px; padding: 6px 9px; color: var(--ink); border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+      .organizer-toggle { display: none; }
+
+      .table-wrap { min-height: 0; flex: 1 1 auto; margin-top: 10px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); scrollbar-gutter: stable; }
+      table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+      th, td { overflow: hidden; padding: 9px 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
+      th { position: sticky; top: 0; z-index: 1; color: var(--muted); background: var(--surface-soft); font-size: 11px; font-weight: 650; }
+      th:nth-child(1) { width: 92px; } th:nth-child(2) { width: 27%; } th:nth-child(3) { width: 120px; } th:nth-child(4) { width: 23%; }
+      tbody tr:hover { background: rgba(186, 68, 58, .035); }
       tr:last-child td { border-bottom: 0; }
-      .status { display: inline-block; padding: 3px 7px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+      .status { display: inline-block; max-width: 100%; padding: 2px 6px; overflow: hidden; border-radius: 99px; font-size: 11px; font-weight: 650; text-overflow: ellipsis; vertical-align: middle; }
       .status.ready { color: var(--success); background: var(--mint); }
       .status.review { color: var(--warning); background: #fff6e8; }
       .status.error { color: var(--danger); background: #fff0ef; }
-      .mode-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #81756e; }
+      .mode-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #81756e; }
       .mode-dot.dlog { background: #6d8b60; } .mode-dot.dlog2 { background: #6685aa; } .mode-dot.rec709 { background: #bc8a41; } .mode-dot.hlg { background: #9b70a5; }
-      .table-footer { margin-top: 10px; color: var(--muted); font-size: 12px; }
-      .organize-copy { margin: 8px 0 16px; color: var(--muted); font-size: 13px; }
-      .mode-options { display: grid; gap: 9px; }
-      .mode-option { padding: 11px; text-align: left; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-      .mode-option.selected { border-color: var(--accent); background: #fff8f7; }
-      .mode-option small { display: block; margin-top: 2px; color: var(--muted); }
-      .settings-list { display: grid; gap: 12px; margin: 18px 0; }
-      .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .setting-row label { color: var(--muted); }
-      .setting-row select { max-width: 155px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
-      .checkbox { display: flex; align-items: center; gap: 7px; color: var(--muted); }
-      .organize-note { margin-top: 12px; color: var(--muted); font-size: 12px; }
-      .result-panel { margin-top: 18px; }
+      .table-footer { flex: 0 0 auto; margin-top: 7px; color: var(--muted); font-size: 11px; }
+
+      .organize-panel { display: flex; min-height: 0; flex-direction: column; padding: 0; overflow: hidden; }
+      .organize-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 13px 14px 10px; border-bottom: 1px solid var(--line); }
+      .organize-close { display: none; }
+      .organize-scroll { min-height: 0; flex: 1 1 auto; padding: 12px 14px; overflow: auto; overscroll-behavior: contain; }
+      .organize-copy { margin-bottom: 10px; color: var(--muted); font-size: 12px; }
+      .mode-options { display: grid; gap: 7px; }
+      .mode-option { padding: 9px 10px; text-align: left; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); }
+      .mode-option:hover:not(:disabled) { background: var(--surface-soft); }
+      .mode-option.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+      .mode-option small { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; }
+      .settings-list { display: grid; gap: 10px; margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line); }
+      .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .setting-row label, .checkbox { color: var(--muted); font-size: 12px; }
+      .setting-row select { max-width: 148px; min-height: 30px; padding: 4px 7px; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+      .checkbox { display: flex; align-items: center; gap: 7px; }
+      .organize-note { margin-top: 12px; color: var(--muted); font-size: 11px; }
+      .organize-actions { display: grid; flex: 0 0 auto; gap: 7px; padding: 11px 14px 13px; border-top: 1px solid var(--line); background: var(--surface-soft); }
+      .organize-actions .button-primary { width: 100%; }
+      .organize-actions .text-button { justify-self: center; }
+
+      .statusbar { display: flex; min-width: 0; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 3px; color: var(--muted); font-size: 11px; }
+      .folder-detail { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
+      .shortcut-hint { flex: 0 0 auto; }
+
+      .backdrop { position: fixed; inset: 0; z-index: 8; border: 0; background: rgba(36, 30, 27, .28); opacity: 0; pointer-events: none; transition: opacity .16s; }
+      .backdrop.visible { opacity: 1; pointer-events: auto; }
+      .drag-overlay { position: fixed; inset: 10px; z-index: 30; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 12px; color: var(--accent-dark); background: rgba(255, 247, 245, .94); font-size: 18px; font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .15s; }
+      .drag-overlay.visible { opacity: 1; }
+
+      .result-panel { position: fixed; inset: 50% auto auto 50%; z-index: 20; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 18px; overflow: auto; box-shadow: var(--shadow); transform: translate(-50%, -50%); }
       .result-panel[hidden] { display: none; }
-      .outcome-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
-      .outcome-stat { padding: 11px; border-radius: 9px; background: #faf7f5; }
-      .outcome-stat strong { display: block; font-size: 21px; }
+      .outcome-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 13px 0; }
+      .outcome-stat { padding: 9px; border-radius: 7px; background: var(--surface-soft); }
+      .outcome-stat strong { display: block; font-size: 19px; }
       .failure-list { margin: 0; padding-left: 18px; color: var(--danger); }
-      .toast { position: fixed; right: 20px; bottom: 20px; z-index: 2; max-width: min(420px, calc(100vw - 40px)); padding: 12px 15px; border-radius: 10px; color: #fff; background: #34302e; box-shadow: 0 8px 26px rgba(0,0,0,.18); opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s; }
+
+      dialog { width: min(420px, calc(100vw - 32px)); padding: 0; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+      dialog::backdrop { background: rgba(36, 30, 27, .3); }
+      .dialog-head { padding: 15px 16px 10px; }
+      .dialog-head p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+      .format-options { display: grid; gap: 7px; padding: 4px 16px 14px; }
+      .format-option { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+      .format-option span { display: block; color: var(--muted); font-size: 11px; }
+      .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 16px; border-top: 1px solid var(--line); background: var(--surface-soft); }
+
+      .toast { position: fixed; right: 16px; bottom: 38px; z-index: 40; max-width: min(420px, calc(100vw - 32px)); padding: 10px 13px; border-radius: 8px; color: #fff; background: #34302e; box-shadow: var(--shadow); opacity: 0; transform: translateY(10px); pointer-events: none; transition: .18s; }
       .toast.visible { opacity: 1; transform: translateY(0); }
       .toast.error { background: var(--danger); }
-      @media (max-width: 980px) { .summary-grid { grid-template-columns: repeat(3, 1fr); } .workspace { grid-template-columns: 1fr; } }
-      @media (max-width: 640px) { .app { width: min(100% - 24px, 1440px); } .topbar, .hero, .folder-bar, .result-head { align-items: flex-start; flex-direction: column; } .topbar { padding: 12px 0; } .hero { padding-top: 26px; } .folder-actions { flex-wrap: wrap; } .summary-grid { grid-template-columns: repeat(2, 1fr); } .search { width: 100%; } .outcome-summary { grid-template-columns: 1fr; } }
+
+      @media (max-width: 1260px) { th:nth-child(5), td:nth-child(5) { display: none; } th:nth-child(2) { width: 34%; } }
+      @media (max-width: 1040px) {
+        .workspace { grid-template-columns: minmax(0, 1fr); }
+        .organizer-toggle, .organize-close { display: inline-block; }
+        .organize-panel { position: fixed; top: 10px; right: 10px; bottom: 10px; z-index: 10; width: min(360px, calc(100vw - 32px)); box-shadow: var(--shadow); transform: translateX(calc(100% + 18px)); transition: transform .18s ease-out; }
+        .organize-panel.open { transform: translateX(0); }
+      }
+      @media (max-width: 760px) {
+        .app { gap: 7px; padding: 0 9px 7px; }
+        .topbar { min-height: 48px; }
+        .brand-copy p, .connection, .shortcut-hint { display: none; }
+        .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+        .summary-card { min-height: 38px; padding: 5px 8px; }
+        .summary-note { display: none; }
+        .summary-value { font-size: 16px; }
+        .folder-actions .text-button:not(#cancelTask), .folder-actions .button-secondary { display: none; }
+        .surface { padding: 10px; }
+        .result-head { align-items: stretch; flex-direction: column; gap: 7px; }
+        .result-actions { width: 100%; }
+        .search { width: 100%; max-width: none; }
+        .section-copy { max-width: 80vw; }
+        th:nth-child(4), td:nth-child(4) { display: none; }
+        th:nth-child(2) { width: auto; }
+      }
+      @media (max-height: 700px) {
+        .app { gap: 7px; }
+        .topbar { min-height: 46px; }
+        .folder-bar { padding-block: 7px; }
+        .summary-card { min-height: 38px; padding-block: 4px; }
+        .summary-note, .section-copy, .organize-copy, .organize-note { display: none; }
+        .surface { padding: 10px; }
+        .organize-head { padding-block: 9px; }
+        .organize-scroll { padding-block: 9px; }
+        .mode-option { padding-block: 7px; }
+        .settings-list { gap: 7px; margin-top: 9px; padding-top: 9px; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #211f1e; --surface: #2b2928; --surface-soft: #312e2d; --ink: #f3efec; --muted: #b8aea9; --line: #494440; --accent-soft: #422825; --mint: #20392b; --shadow: 0 12px 34px rgba(0, 0, 0, .36); }
+        .status.review { background: #49381f; } .status.error { background: #482625; }
+        .drag-overlay { background: rgba(46, 35, 33, .96); }
+      }
     </style>
   </head>
   <body>
     <div class="app">
       <header class="topbar">
-        <div class="brand"><span class="brand-mark">dji</span><span>COLOR DESK</span></div>
-        <div class="top-actions"><span class="connection" id="connectionStatus" role="status" aria-live="polite"><span class="connection-dot"></span>等待本地服务</span></div>
+        <div class="brand"><span class="brand-mark">DJI</span><div class="brand-copy"><h1 id="pageTitle">素材色彩识别与整理</h1><p>选择文件夹后自动识别 DJI 视频的色彩模式</p></div></div>
+        <div class="top-actions"><span class="connection" id="connectionStatus" role="status" aria-live="polite"><span class="connection-dot"></span>等待本地服务</span><button class="button-primary" id="chooseFolder" type="button">选择文件夹</button></div>
       </header>
 
-      <main>
-        <section class="hero" aria-labelledby="pageTitle">
-          <div><h1 id="pageTitle">识别与整理素材</h1><p class="hero-copy">选择素材文件夹后自动识别；确认过的色彩模式可直接整理。</p></div>
-          <button class="button-primary" id="chooseFolder" type="button">选择素材文件夹</button>
+      <section class="folder-bar" aria-label="当前目录">
+        <div class="folder-info"><div class="folder-label">当前扫描目录</div><div class="folder-path" id="folderPath" title="">尚未选择素材文件夹</div></div>
+        <div class="folder-actions"><button class="text-button" id="cancelTask" type="button" hidden>取消任务</button><button class="button-secondary" id="rescanFolder" type="button">重新识别</button><button class="button-secondary" id="changeFolder" type="button">更换目录</button></div>
+        <div class="task-progress" id="taskProgress" aria-hidden="true" hidden><span></span></div>
+      </section>
+
+      <section class="summary-grid" aria-label="识别概览与筛选">
+        <button class="summary-card active" data-filter="all" type="button"><span class="summary-title">全部<span class="summary-note">本次扫描</span></span><span class="summary-value">0</span></button>
+        <button class="summary-card" data-filter="dlog" type="button"><span class="summary-title">D-Log<span class="summary-note">可整理</span></span><span class="summary-value">0</span></button>
+        <button class="summary-card" data-filter="dlog2" type="button"><span class="summary-title">D-Log2<span class="summary-note">可整理</span></span><span class="summary-value">0</span></button>
+        <button class="summary-card" data-filter="rec709" type="button"><span class="summary-title">普通 709<span class="summary-note">可整理</span></span><span class="summary-value">0</span></button>
+        <button class="summary-card" data-filter="rec2100_hlg" type="button"><span class="summary-title">HLG HDR<span class="summary-note">可整理</span></span><span class="summary-value">0</span></button>
+        <button class="summary-card" data-filter="unknown" type="button"><span class="summary-title">未处理<span class="summary-note">保留原位</span></span><span class="summary-value">0</span></button>
+      </section>
+
+      <main class="workspace">
+        <section class="surface results-surface" aria-labelledby="resultsTitle">
+          <div class="result-head"><div><h2 id="resultsTitle">识别结果</h2><p class="section-copy" id="resultsCopy">选择素材文件夹后，识别结果会显示在这里。</p></div><div class="result-actions"><input class="search" id="searchInput" type="search" aria-label="搜索识别结果" placeholder="搜索文件名或路径（Ctrl+F）" /><button class="button-secondary organizer-toggle" id="toggleOrganizer" type="button" aria-expanded="false" aria-controls="organizePanel">整理设置</button></div></div>
+          <div class="table-wrap"><table><thead><tr><th>状态</th><th>文件名</th><th>色彩模式</th><th>所在文件夹</th><th>识别依据</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+          <div class="table-footer" id="tableCount">尚未扫描文件夹</div>
         </section>
 
-        <section class="folder-bar" aria-label="当前目录">
-          <div><div class="folder-label">当前扫描目录</div><div class="folder-path" id="folderPath">尚未选择素材文件夹</div><div class="folder-detail" id="folderDetail" role="status" aria-live="polite">选择目录后自动开始识别</div></div>
-          <div class="folder-actions"><button class="text-button" id="cancelTask" type="button" hidden>取消任务</button><button class="text-button" id="rescanFolder" type="button">重新识别</button><button class="text-button" id="changeFolder" type="button">换目录</button></div>
-        </section>
-
-        <section class="summary-grid" aria-label="识别概览统计">
-          <button class="summary-card active" data-filter="all" type="button"><span class="section-kicker">全部视频</span><div class="summary-value">0</div><span class="summary-note">本次扫描发现</span></button>
-          <button class="summary-card" data-filter="dlog" type="button"><span class="section-kicker">D-Log</span><div class="summary-value">0</div><span class="summary-note">可自动整理</span></button>
-          <button class="summary-card" data-filter="dlog2" type="button"><span class="section-kicker">D-Log2</span><div class="summary-value">0</div><span class="summary-note">可自动整理</span></button>
-          <button class="summary-card" data-filter="rec709" type="button"><span class="section-kicker">普通 709</span><div class="summary-value">0</div><span class="summary-note">可自动整理</span></button>
-          <button class="summary-card" data-filter="rec2100_hlg" type="button"><span class="section-kicker">HLG HDR</span><div class="summary-value">0</div><span class="summary-note">可自动整理</span></button>
-          <button class="summary-card" data-filter="unknown" type="button"><span class="section-kicker">未处理</span><div class="summary-value">0</div><span class="summary-note">不会自动整理</span></button>
-        </section>
-
-        <div class="workspace">
-          <section class="surface" aria-labelledby="resultsTitle">
-            <div class="result-head"><div><h2 id="resultsTitle">识别结果</h2><p class="section-copy" id="resultsCopy">选择素材文件夹后，识别结果会显示在这里。</p></div><input class="search" id="searchInput" type="search" aria-label="搜索识别结果" placeholder="搜索文件名或路径" /></div>
-            <div class="filters" aria-label="筛选识别结果">
-              <button class="filter-pill active" data-filter="all" type="button">全部 <span>0</span></button>
-              <button class="filter-pill" data-filter="dlog" type="button">D-Log <span>0</span></button>
-              <button class="filter-pill" data-filter="dlog2" type="button">D-Log2 <span>0</span></button>
-              <button class="filter-pill" data-filter="rec709" type="button">709 <span>0</span></button>
-              <button class="filter-pill" data-filter="rec2100_hlg" type="button">HLG <span>0</span></button>
-              <button class="filter-pill" data-filter="unknown" type="button">未处理 <span>0</span></button>
-            </div>
-            <div class="table-wrap"><table><thead><tr><th>状态</th><th>文件名</th><th>色彩模式</th><th>所在文件夹</th><th>识别依据</th></tr></thead><tbody id="resultBody"></tbody></table></div>
-            <div class="table-footer" id="tableCount">尚未扫描文件夹</div>
-          </section>
-
-          <aside class="surface" aria-labelledby="organizeTitle">
-            <h2 id="organizeTitle">整理设置</h2><p class="organize-copy">直接执行，不生成预演、操作记录或可撤销文件。</p>
+        <aside class="surface organize-panel" id="organizePanel" aria-labelledby="organizeTitle">
+          <div class="organize-head"><h2 id="organizeTitle">整理设置</h2><button class="icon-button organize-close" id="closeOrganizer" type="button" aria-label="关闭整理设置">×</button></div>
+          <div class="organize-scroll">
+            <p class="organize-copy">选择处理方式和冲突策略；无法确认的文件会保留在原位置。</p>
             <div class="mode-options">
               <button class="mode-option selected" data-mode="copy" type="button"><strong>复制到分类文件夹</strong><small>保留原片，推荐首次使用</small></button>
               <button class="mode-option" data-mode="move" type="button"><strong>移动到分类文件夹</strong><small>将素材移动至分类目录</small></button>
               <button class="mode-option" data-mode="prefix" type="button"><strong>添加文件名前缀</strong><small>为已识别素材添加模式前缀</small></button>
             </div>
             <div class="settings-list">
-              <div class="setting-row"><label for="conflictPolicy">发生同名冲突时</label><select id="conflictPolicy"><option value="suffix" selected>自动追加序号</option><option value="skip">跳过冲突</option><option value="error">标记为失败</option></select></div>
+              <div class="setting-row"><label for="conflictPolicy">同名冲突</label><select id="conflictPolicy"><option value="suffix" selected>自动追加序号</option><option value="skip">跳过冲突</option><option value="error">标记为失败</option></select></div>
               <label class="checkbox"><input id="sidecarToggle" type="checkbox" checked />同步处理同名伴随文件</label>
               <label class="checkbox"><input id="recursiveToggle" type="checkbox" checked />扫描子文件夹</label>
             </div>
-            <button class="button-primary" id="executeOrganize" type="button" disabled>执行整理</button>
-            <button class="text-button" id="exportReport" type="button">导出识别报告（CSV / JSON）</button>
-            <p class="organize-note">执行时会再次检查文件和目标路径。无法确认、证据冲突和识别失败的文件不会自动整理。</p>
-          </aside>
-        </div>
-
-        <section class="surface result-panel" id="outcomePanel" hidden aria-labelledby="outcomeTitle">
-          <div class="section-head"><div><h2 id="outcomeTitle">执行结果</h2><p class="section-copy" id="outcomeCopy"></p></div></div>
-          <div class="outcome-summary"><div class="outcome-stat"><span class="section-kicker">成功</span><strong id="successCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">跳过</span><strong id="skippedCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">失败</span><strong id="failedCount">0</strong></div></div>
-          <ul class="failure-list" id="failureList"></ul>
-        </section>
+            <p class="organize-note">执行时会再次检查文件和目标路径。Web 工作台直接执行，不生成撤销记录。</p>
+          </div>
+          <div class="organize-actions"><button class="button-primary" id="executeOrganize" type="button" disabled>执行整理</button><button class="text-button" id="exportReport" type="button">导出识别报告</button></div>
+        </aside>
       </main>
+
+      <footer class="statusbar"><span class="folder-detail" id="folderDetail" role="status" aria-live="polite">选择目录后自动开始识别</span><span class="shortcut-hint">Ctrl+O 选择目录 · Ctrl+F 搜索 · F5 重新识别</span></footer>
+
+      <section class="surface result-panel" id="outcomePanel" hidden role="dialog" aria-modal="true" aria-labelledby="outcomeTitle">
+        <div class="section-head"><div><h2 id="outcomeTitle">执行结果</h2><p class="section-copy" id="outcomeCopy"></p></div><button class="icon-button" id="closeOutcome" type="button" aria-label="关闭执行结果">×</button></div>
+        <div class="outcome-summary"><div class="outcome-stat"><span class="section-kicker">成功</span><strong id="successCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">跳过</span><strong id="skippedCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">失败</span><strong id="failedCount">0</strong></div></div>
+        <ul class="failure-list" id="failureList"></ul>
+      </section>
     </div>
+
+    <button class="backdrop" id="organizerBackdrop" type="button" aria-label="关闭当前面板"></button>
+    <div class="drag-overlay" id="dragOverlay" aria-hidden="true">释放鼠标以识别此文件夹</div>
+
+    <dialog id="exportDialog" aria-labelledby="exportTitle">
+      <div class="dialog-head"><h2 id="exportTitle">导出识别报告</h2><p>选择报告格式，然后使用系统保存对话框指定位置。</p></div>
+      <div class="format-options">
+        <label class="format-option"><input type="radio" name="exportFormat" value="csv" checked /><strong>CSV 表格<span>适合 Excel、Numbers 等表格软件</span></strong></label>
+        <label class="format-option"><input type="radio" name="exportFormat" value="json" /><strong>JSON 数据<span>适合程序处理和保留完整结构</span></strong></label>
+      </div>
+      <div class="dialog-actions"><button class="button-secondary" id="cancelExport" type="button">取消</button><button class="button-primary" id="confirmExport" type="button">继续导出</button></div>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"><strong id="toastTitle"></strong><div id="toastCopy"></div></div>
     <script src="app.js"></script>
   </body>

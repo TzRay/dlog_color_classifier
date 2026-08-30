@@ -78,6 +78,41 @@ def test_web_controls_expose_dynamic_state_to_assistive_technology() -> None:
     assert 'setAttribute("aria-pressed", String(selected))' in script
 
 
+def test_web_page_uses_fixed_application_shell_and_local_scrolling() -> None:
+    """窗口滚动应由表格等工作区接管，不能继续表现为整张长网页。"""
+
+    html = (ROOT / "prototype" / "index.html").read_text(encoding="utf-8")
+    assert "html, body { width: 100%; height: 100%; overflow: hidden; }" in html
+    assert "grid-template-rows: auto auto auto minmax(0, 1fr) auto" in html
+    assert ".table-wrap { min-height: 0; flex: 1 1 auto;" in html
+    assert "th { position: sticky; top: 0;" in html
+    assert "@media (max-height: 700px)" in html
+
+
+def test_web_page_uses_responsive_organizer_drawer() -> None:
+    """窄窗口应把整理区转换为抽屉，而不是堆到结果表格下方。"""
+
+    html = (ROOT / "prototype" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
+    assert 'id="toggleOrganizer"' in html
+    assert 'id="organizePanel"' in html
+    assert ".organize-panel.open { transform: translateX(0); }" in html
+    assert "function setOrganizerOpen(open)" in script
+    assert 'setAttribute("aria-expanded", String(open))' in script
+
+
+def test_web_page_replaces_browser_confirm_and_adds_desktop_shortcuts() -> None:
+    """报告格式使用应用内对话框，高频操作应提供桌面快捷键。"""
+
+    html = (ROOT / "prototype" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
+    assert 'id="exportDialog"' in html
+    assert "window.confirm" not in script
+    assert 'event.key.toLowerCase() === "o"' in script
+    assert 'event.key.toLowerCase() === "f"' in script
+    assert 'event.key === "F5"' in script
+
+
 def test_web_packaging_collects_dynamic_pywebview_modules() -> None:
     """发布包必须包含 pywebview 的 DOM 与当前平台后端。"""
 
