@@ -84,9 +84,16 @@ class ApplicationService:
         self._organizing_roots: set[Path] = set()
 
     def close(self) -> None:
-        """关闭任务线程池，应用退出时调用。"""
+        """取消剩余工作并关闭线程池，应用退出时调用。"""
 
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            active_tasks = [task for task in self._tasks.values() if task.state in {"queued", "running"}]
+        for task in active_tasks:
+            task.cancel_event.set()
+        if active_tasks:
+            LOGGER.info("应用正在退出，已请求取消 %s 个后台任务", len(active_tasks))
+        # 等待当前单个文件完成，避免窗口关闭后仍在后台继续批量移动或复制。
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
     def get_state(self) -> dict[str, Any]:
         """返回前端初始化所需的服务状态。"""
@@ -185,7 +192,13 @@ class ApplicationService:
                 with self._lock:
                     self._organizing_roots.discard(root)
 
-        return self._submit("organize", work)
+        try:
+            return self._submit("organize", work)
+        except Exception:
+            # 线程池已关闭等提交失败场景不会进入 work 的 finally，须在此释放目录互斥。
+            with self._lock:
+                self._organizing_roots.discard(root)
+            raise
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """读取任务状态。"""
@@ -232,7 +245,13 @@ class ApplicationService:
         task = _Task(task_id=_new_id(kind), kind=kind)
         with self._lock:
             self._tasks[task.task_id] = task
-        self._executor.submit(self._run_task, task, work)
+        try:
+            self._executor.submit(self._run_task, task, work)
+        except Exception:
+            # 提交失败的任务从未运行，不能让它永久停留在 queued 状态。
+            with self._lock:
+                self._tasks.pop(task.task_id, None)
+            raise
         return {"task_id": task.task_id, "kind": kind, "state": task.state}
 
     def _run_task(self, task: _Task, work: Callable[[_Task], dict[str, Any]]) -> None:
@@ -319,6 +338,15 @@ def _build_web_organize_plan(
         conflict_policy=conflict_policy,
         with_sidecars=with_sidecars,
     )
+    if conflict_policy is ConflictPolicy.ERROR:
+        # core 计划以 skipped 表示预演阶段发现的冲突；Web 选项明确写作“标记为失败”，
+        # 因此让执行器安全地再次检查目标并生成失败记录，保证统计和明细语义一致。
+        actionable = [
+            PlanItem(item.source, item.target, item.action, item.scan_result, reason=item.reason)
+            if item.skipped and item.action is not PlanAction.NONE and item.target is not None
+            else item
+            for item in actionable
+        ]
     return [*actionable, *skipped]
 
 

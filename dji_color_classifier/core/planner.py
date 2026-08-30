@@ -55,7 +55,7 @@ def build_plan(
             planned_targets.add(item.target.resolve())
         plan.append(item)
         if with_sidecars and item.target is not None and not item.skipped and item.action is not PlanAction.NONE:
-            sidecars = _build_sidecar_items(item, planned_targets)
+            sidecars = _build_sidecar_items(item, planned_targets, conflict_policy)
             for sidecar in sidecars:
                 if sidecar.target is not None:
                     planned_targets.add(sidecar.target.resolve())
@@ -177,8 +177,12 @@ def _append_suffix_until_free(path: Path, planned_targets: set[Path]) -> Path:
         index += 1
 
 
-def _build_sidecar_items(video_item: PlanItem, planned_targets: set[Path]) -> list[PlanItem]:
-    """为视频的同名伴随文件生成同步整理计划。"""
+def _build_sidecar_items(
+    video_item: PlanItem,
+    planned_targets: set[Path],
+    conflict_policy: ConflictPolicy,
+) -> list[PlanItem]:
+    """为视频的同名伴随文件生成同步整理计划，并遵守统一冲突策略。"""
 
     assert video_item.target is not None
     items: list[PlanItem] = []
@@ -191,14 +195,24 @@ def _build_sidecar_items(video_item: PlanItem, planned_targets: set[Path]) -> li
             continue
 
         target = video_item.target.with_suffix(sidecar.suffix)
-        if target.exists() or target.resolve() in planned_targets:
-            target = _append_suffix_until_free(target, planned_targets)
-
         sidecar_result = ScanResult(
             path=sidecar,
             mode=video_item.scan_result.mode,
             evidence=video_item.scan_result.evidence,
             size=sidecar.stat().st_size,
         )
+        if target.exists() or target.resolve() in planned_targets:
+            if conflict_policy is ConflictPolicy.ERROR:
+                items.append(
+                    PlanItem(sidecar, target, video_item.action, sidecar_result, skipped=True, reason="目标文件已存在")
+                )
+                continue
+            if conflict_policy is ConflictPolicy.SKIP:
+                items.append(
+                    PlanItem(sidecar, target, video_item.action, sidecar_result, skipped=True, reason="目标冲突，已跳过")
+                )
+                continue
+            target = _append_suffix_until_free(target, planned_targets)
+
         items.append(PlanItem(sidecar, target, video_item.action, sidecar_result))
     return items

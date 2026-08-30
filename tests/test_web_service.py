@@ -119,6 +119,32 @@ def test_web_service_marks_existing_target_as_skipped(tmp_path: Path, monkeypatc
         service.close()
 
 
+def test_web_service_marks_error_policy_conflict_as_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """“标记为失败”策略必须生成失败记录，而不能悄悄归入跳过。"""
+
+    import dji_color_classifier.core.scanner as scanner
+
+    source = tmp_path / "DJI_DLOG.MP4"
+    target = tmp_path / "dlog" / source.name
+    source.write_bytes(b"source")
+    target.parent.mkdir()
+    target.write_bytes(b"existing")
+    monkeypatch.setattr(scanner, "classify_file", fake_result)
+
+    service = ApplicationService(max_workers=1)
+    try:
+        scan = scan_directory(service, tmp_path)
+        handle = service.execute_organize({"scan_id": scan["scan_id"], "mode": "copy", "conflict_policy": "error"})
+        result = wait_task(service, handle["task_id"])["result"]
+        assert result["failed_count"] == 1
+        assert result["skipped_count"] == 1
+        failed = [record for record in result["records"] if not record["success"]]
+        assert len(failed) == 1
+        assert "目标文件已存在" in failed[0]["message"]
+    finally:
+        service.close()
+
+
 def test_web_service_rejects_parallel_organize_for_same_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """同一目录执行期间不得提交第二个整理任务。"""
 
@@ -179,3 +205,33 @@ def test_web_service_returns_partial_result_after_cancel(tmp_path: Path, monkeyp
         assert snapshot["result"]["success_count"] >= 1
     finally:
         service.close()
+
+
+def test_web_service_close_stops_remaining_organize_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """关闭窗口时只完成当前文件，不得在后台继续处理整个目录。"""
+
+    import dji_color_classifier.core.executor as executor
+    import dji_color_classifier.core.scanner as scanner
+
+    for index in range(3):
+        (tmp_path / f"DJI_{index}_DLOG.MP4").write_bytes(b"dlog")
+    monkeypatch.setattr(scanner, "classify_file", fake_result)
+    started = threading.Event()
+    original_execute_item = executor._execute_item
+
+    def slow_execute_item(item):  # noqa: ANN001
+        started.set()
+        time.sleep(0.04)
+        return original_execute_item(item)
+
+    monkeypatch.setattr(executor, "_execute_item", slow_execute_item)
+    service = ApplicationService(max_workers=1)
+    scan = scan_directory(service, tmp_path)
+    handle = service.execute_organize({"scan_id": scan["scan_id"], "mode": "copy"})
+    assert started.wait(timeout=1)
+
+    service.close()
+
+    snapshot = service.get_task_status(handle["task_id"])
+    assert snapshot["state"] == "cancelled"
+    assert len(list((tmp_path / "dlog").glob("*.MP4"))) == 1

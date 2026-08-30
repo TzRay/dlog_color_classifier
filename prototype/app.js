@@ -75,10 +75,11 @@
 
   function refreshControls() {
     const busy = isBusy();
+    const hasActionableFiles = state.files.some((file) => file.status === "ready");
     $("#chooseFolder").disabled = busy;
     $("#changeFolder").disabled = busy;
     $("#rescanFolder").disabled = busy || !state.root;
-    $("#executeOrganize").disabled = busy || !state.scanId || state.needsRescan;
+    $("#executeOrganize").disabled = busy || !state.scanId || state.needsRescan || !hasActionableFiles;
     $("#exportReport").disabled = busy || !state.scanId;
     $("#conflictPolicy").disabled = busy;
     $("#sidecarToggle").disabled = busy;
@@ -164,7 +165,11 @@
 
   function setFilter(filter) {
     state.filter = filter;
-    $$("[data-filter]").forEach((element) => element.classList.toggle("active", element.dataset.filter === filter));
+    $$("[data-filter]").forEach((element) => {
+      const selected = element.dataset.filter === filter;
+      element.classList.toggle("active", selected);
+      element.setAttribute("aria-pressed", String(selected));
+    });
     renderResults();
   }
 
@@ -211,13 +216,20 @@
   async function startScan(root) {
     const selectedRoot = String(root || "").trim();
     if (!selectedRoot) return;
+    // pywebview 可能同时派发 JavaScript 与 Python 两路 drop 事件；繁忙检查可避免
+    // 同一个目录被重复提交，也禁止整理期间启动会读取变化中文件的扫描。
+    if (isBusy()) return;
     state.root = selectedRoot;
     state.scanId = "";
     state.files = [];
+    state.filter = "all";
     state.needsRescan = false;
+    $("#searchInput").value = "";
+    $("#folderPath").textContent = selectedRoot;
+    $("#folderDetail").textContent = "正在准备识别…";
     $("#outcomePanel").hidden = true;
     updateSummary();
-    renderResults();
+    setFilter("all");
     state.activeKind = "scan";
     state.submitting = true;
     refreshControls();
@@ -248,15 +260,24 @@
   }
 
   async function chooseFolder() {
+    if (isBusy()) return;
+    // 系统目录对话框打开期间也要锁定入口，避免快速点击弹出多个对话框。
+    state.submitting = true;
+    refreshControls();
     try {
       const selected = await callApi("choose_directory");
+      state.submitting = false;
+      refreshControls();
       if (selected) await startScan(selected);
     } catch (error) {
+      state.submitting = false;
+      refreshControls();
       showToast("无法选择文件夹", bridgeError(error), true);
     }
   }
 
   async function executeOrganize() {
+    if (isBusy()) return;
     if (!state.scanId) {
       showToast("尚未完成识别", "请先选择素材文件夹并等待识别完成。", true);
       return;
@@ -301,8 +322,11 @@
   }
 
   async function exportReport() {
-    if (!state.scanId) return;
+    if (!state.scanId || isBusy()) return;
     const format = window.confirm("确定导出 JSON 报告吗？点击“取消”将导出 CSV 报告。") ? "json" : "csv";
+    // 保存对话框和报告写入期间保持单任务状态，避免扫描结果同时被替换。
+    state.submitting = true;
+    refreshControls();
     try {
       const path = await callApi("choose_report_path", format);
       if (!path) return;
@@ -310,6 +334,9 @@
       showToast("报告已导出", `${result.count} 条识别结果已写入 ${result.path}`);
     } catch (error) {
       showToast("报告导出失败", bridgeError(error), true);
+    } finally {
+      state.submitting = false;
+      refreshControls();
     }
   }
 
@@ -319,6 +346,7 @@
       showToast("无法读取拖入目录", "没有收到本地完整路径，请点击“选择素材文件夹”。", true);
       return;
     }
+    if (isBusy()) return;
     void startScan(selectedRoot);
   }
 
@@ -336,7 +364,11 @@
     $("#exportReport").addEventListener("click", exportReport);
     $$(".mode-option").forEach((button) => button.addEventListener("click", () => {
       state.mode = button.dataset.mode;
-      $$(".mode-option").forEach((option) => option.classList.toggle("selected", option === button));
+      $$(".mode-option").forEach((option) => {
+        const selected = option === button;
+        option.classList.toggle("selected", selected);
+        option.setAttribute("aria-pressed", String(selected));
+      });
     }));
     $("#recursiveToggle").addEventListener("change", () => {
       if (state.root && !isBusy()) void startScan(state.root);
@@ -369,7 +401,10 @@
 
   bindEvents();
   updateSummary();
-  renderResults();
+  setFilter(state.filter);
+  $$(".mode-option").forEach((option) => {
+    option.setAttribute("aria-pressed", String(option.dataset.mode === state.mode));
+  });
   refreshControls();
   window.addEventListener("pywebviewready", connectBridge);
   void connectBridge();

@@ -46,6 +46,17 @@ def test_task_terminal_refreshes_controls_after_state_callback() -> None:
     assert terminal.index("onTerminal(") < terminal.index("refreshControls()")
 
 
+def test_runtime_script_blocks_duplicate_scan_and_resets_old_filters() -> None:
+    """重复拖拽不得并发扫描，切换目录也不能残留旧搜索条件。"""
+
+    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
+    start_scan = script.split("async function startScan", maxsplit=1)[1].split("async function chooseFolder", maxsplit=1)[0]
+    assert "if (isBusy()) return" in start_scan
+    assert 'state.filter = "all"' in start_scan
+    assert '$("#searchInput").value = ""' in start_scan
+    assert '$("#folderPath").textContent = selectedRoot' in start_scan
+
+
 def test_runtime_script_only_references_existing_ids() -> None:
     """防止页面调整后生产脚本静默操作不存在的 DOM 节点。"""
 
@@ -54,6 +65,17 @@ def test_runtime_script_only_references_existing_ids() -> None:
     html_ids = set(re.findall(r'id="([A-Za-z][A-Za-z0-9_-]*)"', html))
     referenced_ids = set(re.findall(r'\$\("#([A-Za-z][A-Za-z0-9_-]*)"\)', script))
     assert referenced_ids <= html_ids
+
+
+def test_web_controls_expose_dynamic_state_to_assistive_technology() -> None:
+    """搜索框、动态消息和切换按钮应具有可读名称与选中状态。"""
+
+    html = (ROOT / "prototype" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
+    assert 'id="searchInput" type="search" aria-label="搜索识别结果"' in html
+    assert 'id="folderDetail" role="status" aria-live="polite"' in html
+    assert 'id="toast" role="status" aria-live="polite"' in html
+    assert 'setAttribute("aria-pressed", String(selected))' in script
 
 
 def test_web_packaging_collects_dynamic_pywebview_modules() -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dji_color_classifier.core.models import ClassificationEvidence, ColorMode, PlanAction, ScanResult
+from dji_color_classifier.core.models import ClassificationEvidence, ColorMode, ConflictPolicy, PlanAction, ScanResult
 from dji_color_classifier.core.planner import build_plan
 
 
@@ -92,3 +92,41 @@ def test_rejects_directory_template_that_escapes_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="相对路径"):
         build_plan([result(source, ColorMode.DLOG)], root=tmp_path, mode="move", dir_template="../outside")
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_skipped", "expected_name"),
+    [
+        (ConflictPolicy.ERROR, True, "DJI_0001.srt"),
+        (ConflictPolicy.SKIP, True, "DJI_0001.srt"),
+        (ConflictPolicy.SUFFIX, False, "DJI_0001_001.srt"),
+    ],
+)
+def test_sidecar_conflict_follows_selected_policy(
+    tmp_path: Path,
+    policy: ConflictPolicy,
+    expected_skipped: bool,
+    expected_name: str,
+) -> None:
+    """伴随文件必须与视频使用相同的冲突策略。"""
+
+    source = tmp_path / "DJI_0001.MP4"
+    sidecar = tmp_path / "DJI_0001.srt"
+    source.write_bytes(b"video")
+    sidecar.write_text("subtitle", encoding="utf-8")
+    target_dir = tmp_path / "dlog"
+    target_dir.mkdir()
+    (target_dir / sidecar.name).write_text("existing", encoding="utf-8")
+
+    plan = build_plan(
+        [result(source, ColorMode.DLOG)],
+        root=tmp_path,
+        mode="copy",
+        conflict_policy=policy,
+        with_sidecars=True,
+    )
+
+    assert plan[1].source == sidecar
+    assert plan[1].skipped is expected_skipped
+    assert plan[1].target is not None
+    assert plan[1].target.name == expected_name

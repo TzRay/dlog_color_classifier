@@ -88,7 +88,7 @@
     <div class="app">
       <header class="topbar">
         <div class="brand"><span class="brand-mark">dji</span><span>COLOR DESK</span></div>
-        <div class="top-actions"><span class="connection" id="connectionStatus"><span class="connection-dot"></span>等待本地服务</span></div>
+        <div class="top-actions"><span class="connection" id="connectionStatus" role="status" aria-live="polite"><span class="connection-dot"></span>等待本地服务</span></div>
       </header>
 
       <main>
@@ -98,7 +98,7 @@
         </section>
 
         <section class="folder-bar" aria-label="当前目录">
-          <div><div class="folder-label">当前扫描目录</div><div class="folder-path" id="folderPath">尚未选择素材文件夹</div><div class="folder-detail" id="folderDetail">选择目录后自动开始识别</div></div>
+          <div><div class="folder-label">当前扫描目录</div><div class="folder-path" id="folderPath">尚未选择素材文件夹</div><div class="folder-detail" id="folderDetail" role="status" aria-live="polite">选择目录后自动开始识别</div></div>
           <div class="folder-actions"><button class="text-button" id="cancelTask" type="button" hidden>取消任务</button><button class="text-button" id="rescanFolder" type="button">重新识别</button><button class="text-button" id="changeFolder" type="button">换目录</button></div>
         </section>
 
@@ -113,7 +113,7 @@
 
         <div class="workspace">
           <section class="surface" aria-labelledby="resultsTitle">
-            <div class="result-head"><div><h2 id="resultsTitle">识别结果</h2><p class="section-copy" id="resultsCopy">选择素材文件夹后，识别结果会显示在这里。</p></div><input class="search" id="searchInput" type="search" placeholder="搜索文件名或路径" /></div>
+            <div class="result-head"><div><h2 id="resultsTitle">识别结果</h2><p class="section-copy" id="resultsCopy">选择素材文件夹后，识别结果会显示在这里。</p></div><input class="search" id="searchInput" type="search" aria-label="搜索识别结果" placeholder="搜索文件名或路径" /></div>
             <div class="filters" aria-label="筛选识别结果">
               <button class="filter-pill active" data-filter="all" type="button">全部 <span>0</span></button>
               <button class="filter-pill" data-filter="dlog" type="button">D-Log <span>0</span></button>
@@ -151,7 +151,7 @@
         </section>
       </main>
     </div>
-    <div class="toast" id="toast"><strong id="toastTitle"></strong><div id="toastCopy"></div></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"><strong id="toastTitle"></strong><div id="toastCopy"></div></div>
     <script src="app.js"></script>
   </body>
 </html>
