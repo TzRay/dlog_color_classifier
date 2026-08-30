@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dlog-color-classifier"
-version = "2.0.0rc3"
-description = "DJI D-Log / D-Log2 metadata classifier, organizer, CLI and GUI"
+version = "2.0.0"
+description = "DJI D-Log / D-Log2 metadata classifier and desktop organizer"
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = []

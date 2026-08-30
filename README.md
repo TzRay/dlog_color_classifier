@@ -4,7 +4,7 @@ DJI 视频色彩模式识别与整理工具。它读取 DJI MP4/MOV 容器中的
 
 工具不会分析视频画面，不会解码视频，也不会修改视频文件内部元数据。
 
-当前版本：`2.0.0-preview.3`。这是基于 pywebview 原生 Web 工作台的预览版，发布包由 GitHub Actions 自动构建。
+当前版本：`2.0.0`。正式发布包提供基于 pywebview 的原生 Web 工作台，支持 Windows x64 与 macOS Apple Silicon。
 
 ## 主要功能
 
