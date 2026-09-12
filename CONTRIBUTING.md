@@ -9,11 +9,16 @@ python -m pip install -e ".[web,dev]"
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
 pytest -q tests
 node --test tests/web_runtime.test.cjs
-python -m ruff check dji_color_classifier tests scripts classify_dji_color_modes.py rename_dji_color_modes.py
+python -m ruff --version
+python -m ruff check --config pyproject.toml dji_color_classifier tests scripts classify_dji_color_modes.py rename_dji_color_modes.py
 ```
 
 当前维护和发布的入口为 Web 桌面版。运行 JavaScript 行为测试需要 Node.js 22 或以上；
 历史 Qt 测试在没有对应依赖时自动跳过，不作为桌面版验收依据。
+
+Ruff 版本与规则集由 `pyproject.toml` 固定，本地与 CI 均使用 Ruff 0.16.7
+及既有的 `E4`、`E7`、`E9`、`F` 规则基线。更新 Ruff 时应同时修改开发依赖和
+`required-version`，并显式评审规则变更，避免默认规则集变化造成检查结果漂移。
 
 打包后需要验证实际可执行程序，而不仅是源码测试：
 

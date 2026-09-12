@@ -13,7 +13,7 @@ dependencies = []
 [project.optional-dependencies]
 gui = ["PySide6>=6.6"]
 web = ["pywebview>=5.3"]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["pytest>=8.0", "ruff==0.16.7"]
 
 [project.scripts]
 dji-color = "dji_color_classifier.cli:main"
@@ -30,3 +30,9 @@ include = ["dji_color_classifier*"]
 
 [tool.ruff]
 line-length = 120
+# 固定本地与 CI 的检查器版本，避免安装时间不同导致检查结果漂移。
+required-version = "==0.16.7"
+
+[tool.ruff.lint]
+# 显式保留既有质量基线；Ruff 0.16 扩大了默认规则集，规则升级应单独评审。
+select = ["E4", "E7", "E9", "F"]

@@ -38,4 +38,6 @@ jobs:
         run: node --test tests/web_runtime.test.cjs
 
       - name: Lint
-        run: python -m ruff check dji_color_classifier tests scripts classify_dji_color_modes.py rename_dji_color_modes.py
+        run: |
+          python -m ruff --version
+          python -m ruff check --config pyproject.toml dji_color_classifier tests scripts classify_dji_color_modes.py rename_dji_color_modes.py

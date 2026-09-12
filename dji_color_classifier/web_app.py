@@ -215,7 +215,10 @@ def bind_dom_events(window: Any) -> None:
 def main(argv: list[str] | None = None) -> int:
     """启动 DJI Color Desk Web 工作台。"""
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Windows 无控制台发布包启动时 stderr 为 None。必须在加载桌面依赖前
+    # 选定安全处理器，避免依赖稍后替换 stderr 时，旧处理器仍向空流写日志。
+    handler = logging.StreamHandler(sys.stderr) if sys.stderr is not None else logging.NullHandler()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", handlers=[handler])
     arguments = argv if argv is not None else sys.argv[1:]
     if arguments and arguments[0] == "--self-test":
         # 发布流水线调用该入口，不显示窗口且只操作自动清理的临时样例。

@@ -1,8 +1,12 @@
-"""pywebview 桌面壳的拖拽路径回归测试。"""
+"""pywebview 桌面壳的拖拽路径及无控制台启动回归测试。"""
 
 from __future__ import annotations
 
+import io
+import json
+import logging
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 from dji_color_classifier.web_app import DesktopBridge, _extract_dropped_path, _wait_for_dropped_path, bind_dom_events
@@ -137,3 +141,30 @@ def test_desktop_bridge_keeps_native_objects_out_of_javascript_api() -> None:
     assert set(bridge.__dict__) == {"_service", "_window"}
     assert not hasattr(bridge, "service")
     assert not hasattr(bridge, "window")
+
+
+def test_self_check_with_no_console_survives_legacy_stderr(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """模拟无控制台启动后依赖安装英文代码页 stderr，真实扫描和复制仍应完成。"""
+
+    from dji_color_classifier import self_check, web_app
+
+    monkeypatch.setattr(logging.root, "handlers", [])
+    monkeypatch.setattr(logging.root, "level", logging.WARNING)
+    monkeypatch.setattr(sys, "stderr", None)
+    original_import = self_check.importlib.import_module
+    with io.TextIOWrapper(io.BytesIO(), encoding="cp1252") as legacy_stderr:
+        def import_desktop_module(name: str, package=None):  # noqa: ANN001
+            """复现桌面运行库在日志已初始化之后安装标准错误流的行为。"""
+
+            if name.startswith("webview"):
+                monkeypatch.setattr(sys, "stderr", legacy_stderr)
+                return SimpleNamespace()
+            return original_import(name, package)
+
+        monkeypatch.setattr(self_check.importlib, "import_module", import_desktop_module)
+        report_path = tmp_path / "self-test.json"
+        assert web_app.main(["--self-test", str(report_path)]) == 0
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["success"] is True
+    assert report["checks"][-1] == "真实服务扫描、异常隔离及复制校验通过"
