@@ -11,6 +11,9 @@ from pathlib import Path
 def main() -> int:
     """对指定可执行程序运行有超时的无窗口自检。"""
 
+    # Windows CI 默认代码页可能无法输出中文，验收日志统一使用 UTF-8。
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     executable = Path(sys.argv[1]).resolve()
     report_path = Path("build") / f"{executable.stem}-self-test.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,6 +27,8 @@ def main() -> int:
         raise RuntimeError(f"发布包未生成自检报告，进程退出码：{completed.returncode}")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if completed.returncode or not report["success"]:
+        if report.get("traceback"):
+            print(report["traceback"], file=sys.stderr)
         raise RuntimeError(report["error"] or f"发布包异常退出：{completed.returncode}")
     for message in report["checks"]:
         print(f"自检通过：{message}")

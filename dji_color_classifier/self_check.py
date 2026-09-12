@@ -8,6 +8,7 @@ import struct
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 from dji_color_classifier.web_service import ApplicationService
@@ -53,6 +54,8 @@ def run_self_check(report_path: Path, html_path: Path) -> int:
         report["success"] = True
     except Exception as exc:
         report["error"] = f"自检失败：{type(exc).__name__}: {exc}"
+        # 无控制台发布包必须把完整堆栈留在报告中，便于定位平台专属依赖问题。
+        report["traceback"] = traceback.format_exc()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0 if report["success"] else 1
