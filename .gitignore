@@ -24,3 +24,7 @@ scan_reports/
 # 独立的 DJI 元数据移植项目及其本地输出，不属于当前色彩分类器仓库。
 dji_metadata_transplant_tool/
 metadata_transplant_outputs/
+
+# 本地浏览器验收截图、会话与快照。
+.playwright-cli/
+output/playwright/

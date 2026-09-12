@@ -6,6 +6,7 @@ ISO BMFF 子集，不做视频解码，也不扫描压缩码流。
 
 from __future__ import annotations
 
+import os
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,10 @@ class Mp4ReaderError(RuntimeError):
 
 class UnsupportedMp4Error(Mp4ReaderError):
     """当前原生读取器暂不支持的 MP4 结构。"""
+
+
+class MissingDjmdError(Mp4ReaderError):
+    """容器可读取，但不含 DJI djmd 数据轨。"""
 
 
 @dataclass(frozen=True)
@@ -59,43 +64,77 @@ CONTAINER_BOXES = {
 # 直接以子 box 开始。解析时需根据首个子 box 的合法性判断，不能固定跳过 4 字节。
 # DJI 写入 QuickTime 元数据时使用的标准键名。
 DJI_COLOR_GAMMA_KEY = "com.dji.camera.ColorGammaSxS"
+MAX_METADATA_BYTES = 8 * 1024 * 1024
+MAX_BOX_DEPTH = 32
+MAX_BOX_COUNT = 100_000
 
 
 @dataclass(frozen=True)
-class SampleTable:
-    """定位第一包 sample 所需的表。"""
+class DjiMetadata:
+    """同一次文件读取获得的色彩证据及独立来源的诊断。"""
 
-    sample_entry_types: tuple[str, ...]
-    sample_sizes: tuple[int, ...]
-    chunk_offsets: tuple[int, ...]
-    first_chunk: int
-    samples_per_chunk: int
+    metadata_label: str | None
+    packet: bytes | None
+    size: int
+    warnings: tuple[str, ...] = ()
+
+
+def read_dji_metadata(video_path: Path) -> DjiMetadata:
+    """一次打开并解析容器，分别读取 mdta 和 djmd；一侧失败不丢弃另一侧证据。"""
+
+    with video_path.open("rb") as handle:
+        file_size = os.fstat(handle.fileno()).st_size
+        top_boxes = _parse_children(handle, 0, file_size)
+        warnings: list[str] = []
+        label: str | None = None
+        packet: bytes | None = None
+        try:
+            label = _read_quicktime_metadata(handle, top_boxes, wanted_key=DJI_COLOR_GAMMA_KEY).get(DJI_COLOR_GAMMA_KEY)
+        except Mp4ReaderError as exc:
+            warnings.append(f"QuickTime 元数据读取失败：{exc}")
+        try:
+            packet = _read_djmd_packet(handle, top_boxes, file_size)
+        except MissingDjmdError:
+            pass
+        except Mp4ReaderError as exc:
+            warnings.append(f"djmd 元数据读取失败：{exc}")
+        return DjiMetadata(label, packet, file_size, tuple(warnings))
 
 
 def read_first_djmd_packet(video_path: Path) -> bytes:
     """从 MP4/MOV 文件中读取 DJI `djmd` 轨第一包数据。"""
 
     with video_path.open("rb") as handle:
-        file_size = video_path.stat().st_size
+        file_size = os.fstat(handle.fileno()).st_size
         top_boxes = _parse_children(handle, 0, file_size)
-        if _find_box(top_boxes, ("moof",)) is not None:
-            raise UnsupportedMp4Error("暂不支持 fragmented MP4：检测到 moof box")
+        return _read_djmd_packet(handle, top_boxes, file_size)
 
-        moov = _find_box(top_boxes, ("moov",))
-        if moov is None:
-            raise Mp4ReaderError("未找到 moov box，无法读取 sample table")
 
-        for trak in [box for box in moov.children if box.type == "trak"]:
-            table = _read_sample_table(handle, trak)
-            if table is None or "djmd" not in table.sample_entry_types:
-                continue
-            offset, size = _first_sample_location(table)
-            if offset < 0 or size <= 0 or offset + size > file_size:
-                raise Mp4ReaderError("djmd 第一包偏移或长度无效")
-            handle.seek(offset)
-            return handle.read(size)
+def _read_djmd_packet(handle: BinaryIO, top_boxes: list[Box], file_size: int) -> bytes:
+    """从已解析的容器中定位第一包，仅读取目标轨道必要的表项。"""
 
-    raise Mp4ReaderError("未找到 DJI djmd 数据轨")
+    if _find_box(top_boxes, ("moof",)) is not None:
+        raise UnsupportedMp4Error("暂不支持 fragmented MP4：检测到 moof box")
+    moov = _find_box(top_boxes, ("moov",))
+    if moov is None:
+        raise Mp4ReaderError("未找到 moov box，无法读取 sample table")
+    for trak in moov.children:
+        if trak.type != "trak":
+            continue
+        location = _read_first_sample_location(handle, trak)
+        if location is None:
+            continue
+        offset, size = location
+        if offset < 0 or size <= 0 or offset + size > file_size:
+            raise Mp4ReaderError("djmd 第一包偏移或长度无效")
+        if size > MAX_METADATA_BYTES:
+            raise Mp4ReaderError("djmd 第一包超过允许大小")
+        handle.seek(offset)
+        packet = handle.read(size)
+        if len(packet) != size:
+            raise Mp4ReaderError("djmd 第一包数据不完整")
+        return packet
+    raise MissingDjmdError("未找到 DJI djmd 数据轨")
 
 
 def read_quicktime_metadata(video_path: Path) -> dict[str, str]:
@@ -107,25 +146,31 @@ def read_quicktime_metadata(video_path: Path) -> dict[str, str]:
     """
 
     with video_path.open("rb") as handle:
-        file_size = video_path.stat().st_size
+        file_size = os.fstat(handle.fileno()).st_size
         top_boxes = _parse_children(handle, 0, file_size)
-        moov = _find_box(top_boxes, ("moov",))
-        if moov is None:
-            raise Mp4ReaderError("未找到 moov box，无法读取 QuickTime 元数据")
+        return _read_quicktime_metadata(handle, top_boxes)
 
-        meta = _find_box([moov], ("moov", "meta")) or _find_box([moov], ("moov", "udta", "meta"))
-        if meta is None:
-            return {}
 
-        keys_box = _find_direct_child(meta, "keys")
-        ilst_box = _find_direct_child(meta, "ilst")
-        if keys_box is None or ilst_box is None:
-            return {}
+def _read_quicktime_metadata(
+    handle: BinaryIO, top_boxes: list[Box], *, wanted_key: str | None = None
+) -> dict[str, str]:
+    """复用已解析的 box 树读取 QuickTime 元数据。"""
 
-        keys = _read_mdta_keys(handle, keys_box)
-        if not keys:
-            return {}
-        return _read_mdta_values(handle, ilst_box, keys)
+    moov = _find_box(top_boxes, ("moov",))
+    if moov is None:
+        raise Mp4ReaderError("未找到 moov box，无法读取 QuickTime 元数据")
+    meta = _find_box([moov], ("moov", "meta")) or _find_box([moov], ("moov", "udta", "meta"))
+    if meta is None:
+        return {}
+    keys_box = _find_direct_child(meta, "keys")
+    ilst_box = _find_direct_child(meta, "ilst")
+    if keys_box is None or ilst_box is None:
+        return {}
+    keys = _read_mdta_keys(handle, keys_box)
+    if wanted_key is not None:
+        # 分类只需要色彩标签，不读取无关封面、描述等大 payload。
+        keys = {index: key for index, key in keys.items() if key == wanted_key}
+    return _read_mdta_values(handle, ilst_box, keys) if keys else {}
 
 
 def read_dji_color_gamma_label(video_path: Path) -> str | None:
@@ -134,12 +179,22 @@ def read_dji_color_gamma_label(video_path: Path) -> str | None:
     return read_quicktime_metadata(video_path).get(DJI_COLOR_GAMMA_KEY)
 
 
-def _parse_children(handle: BinaryIO, start: int, end: int) -> list[Box]:
+def _parse_children(
+    handle: BinaryIO, start: int, end: int, *, depth: int = 0, remaining: list[int] | None = None
+) -> list[Box]:
     """解析指定范围内的子 box。"""
 
+    if depth > MAX_BOX_DEPTH:
+        raise Mp4ReaderError("MP4 容器嵌套层级超过允许范围")
+    if remaining is None:
+        # 整棵容器树共用计数，避免每个父节点重新获得完整额度。
+        remaining = [MAX_BOX_COUNT]
     boxes: list[Box] = []
     offset = start
     while offset + 8 <= end:
+        remaining[0] -= 1
+        if remaining[0] < 0:
+            raise Mp4ReaderError("MP4 box 数量超过允许范围")
         box = _read_box_header(handle, offset, end)
         if box.size < box.header_size:
             raise Mp4ReaderError(f"无效 box 大小：{box.type} at {box.start}")
@@ -151,13 +206,30 @@ def _parse_children(handle: BinaryIO, start: int, end: int) -> list[Box]:
             child_start = _container_children_start(handle, box)
             if child_start > box.end:
                 raise Mp4ReaderError(f"容器 box 数据过短：{box.type} at {box.start}")
-            children = _parse_children(handle, child_start, box.end)
+            children = _parse_children(handle, child_start, box.end, depth=depth + 1, remaining=remaining)
         boxes.append(Box(box.type, box.start, box.size, box.header_size, children))
 
         if box.size == 0:
             break
         offset = box.end
     return boxes
+
+
+def _read_box_bytes(handle: BinaryIO, box: Box, offset: int = 0, size: int | None = None) -> bytes:
+    """按 payload 相对位置限量读取，先检查边界，避免跨 box 或按恶意计数分配。"""
+
+    payload_size = box.size - box.header_size
+    if size is None:
+        size = payload_size - offset
+    if offset < 0 or size < 0 or offset + size > payload_size:
+        raise Mp4ReaderError(f"{box.type} 数据不完整")
+    if size > MAX_METADATA_BYTES:
+        raise Mp4ReaderError(f"{box.type} 数据超过允许大小")
+    handle.seek(box.payload_start + offset)
+    payload = handle.read(size)
+    if len(payload) != size:
+        raise Mp4ReaderError(f"{box.type} 数据不完整")
+    return payload
 
 
 def _read_box_header(handle: BinaryIO, offset: int, parent_end: int) -> Box:
@@ -192,12 +264,11 @@ def _container_children_start(handle: BinaryIO, box: Box) -> int:
     if box.type != "meta":
         return box.payload_start
 
-    handle.seek(box.payload_start)
-    header = handle.read(8)
-    if len(header) < 8:
-        raise Mp4ReaderError("meta box 数据过短")
-    direct_size = struct.unpack_from(">I", header)[0]
     remaining = box.end - box.payload_start
+    if remaining < 8:
+        raise Mp4ReaderError("meta box 数据过短")
+    header = _read_box_bytes(handle, box, 0, 8)
+    direct_size = struct.unpack_from(">I", header)[0]
     if 8 <= direct_size <= remaining:
         return box.payload_start
     return box.payload_start + 4
@@ -206,12 +277,13 @@ def _container_children_start(handle: BinaryIO, box: Box) -> int:
 def _read_mdta_keys(handle: BinaryIO, box: Box) -> dict[int, str]:
     """读取 ``keys`` box，建立一基索引到键名的映射。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
+    payload = _read_box_bytes(handle, box)
     if len(payload) < 8:
         raise Mp4ReaderError("QuickTime keys 数据过短")
 
     entry_count = struct.unpack_from(">I", payload, 4)[0]
+    if entry_count > MAX_BOX_COUNT:
+        raise Mp4ReaderError("QuickTime keys 数量超过允许范围")
     offset = 8
     keys: dict[int, str] = {}
     for index in range(1, entry_count + 1):
@@ -236,6 +308,7 @@ def _read_mdta_values(handle: BinaryIO, ilst_box: Box, keys: dict[int, str]) -> 
     """读取 ``ilst`` 内与 ``keys`` 索引对应的文本 ``data`` 值。"""
 
     values: dict[str, str] = {}
+    total_bytes = 0
     for item in _parse_children(handle, ilst_box.payload_start, ilst_box.end):
         key_index = int.from_bytes(item.type.encode("latin1"), "big")
         key = keys.get(key_index)
@@ -245,6 +318,9 @@ def _read_mdta_values(handle: BinaryIO, ilst_box: Box, keys: dict[int, str]) -> 
         data_box = _find_direct_child_from_range(handle, item.payload_start, item.end, "data")
         if data_box is None:
             continue
+        total_bytes += data_box.size - data_box.header_size
+        if total_bytes > MAX_METADATA_BYTES:
+            raise Mp4ReaderError("QuickTime 文本数据总量超过允许大小")
         value = _read_mdta_text_value(handle, data_box)
         if value is not None:
             values[key] = value
@@ -263,8 +339,7 @@ def _find_direct_child_from_range(handle: BinaryIO, start: int, end: int, box_ty
 def _read_mdta_text_value(handle: BinaryIO, box: Box) -> str | None:
     """读取 QuickTime ``data`` box 的 UTF-8 文本 payload。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
+    payload = _read_box_bytes(handle, box)
     # data 为 FullBox，后续 4 字节为 locale；两者均不是实际文本。
     if len(payload) < 8:
         raise Mp4ReaderError("QuickTime data 数据过短")
@@ -278,165 +353,122 @@ def _read_mdta_text_value(handle: BinaryIO, box: Box) -> str | None:
         return None
 
 
-def _read_sample_table(handle: BinaryIO, trak: Box) -> SampleTable | None:
-    """从 trak 中读取定位第一包需要的 sample table。"""
+def _read_first_sample_location(handle: BinaryIO, trak: Box) -> tuple[int, int] | None:
+    """先识别 djmd 轨道，再读取第一包所需表项；不展开整段素材的 sample 表。"""
 
     stbl = _find_box([trak], ("trak", "mdia", "minf", "stbl"))
     if stbl is None:
         return None
 
     stsd = _find_direct_child(stbl, "stsd")
+    if stsd is None:
+        return None
+    sample_entry_types = _read_stsd_sample_entry_types(handle, stsd)
+    if "djmd" not in sample_entry_types:
+        return None
+
     stsz = _find_direct_child(stbl, "stsz")
     stz2 = _find_direct_child(stbl, "stz2")
     stsc = _find_direct_child(stbl, "stsc")
     stco = _find_direct_child(stbl, "stco")
     co64 = _find_direct_child(stbl, "co64")
 
-    if stsd is None or stsc is None or (stsz is None and stz2 is None) or (stco is None and co64 is None):
-        return None
+    if stsc is None or (stsz is None and stz2 is None) or (stco is None and co64 is None):
+        raise Mp4ReaderError("djmd 轨缺少必要的 sample table")
 
-    sample_entry_types = _read_stsd_sample_entry_types(handle, stsd)
-    sample_sizes = _read_stsz(handle, stsz) if stsz is not None else _read_stz2(handle, stz2)  # type: ignore[arg-type]
-    first_chunk, samples_per_chunk = _read_first_stsc_entry(handle, stsc)
-    chunk_offsets = _read_stco(handle, stco) if stco is not None else _read_co64(handle, co64)  # type: ignore[arg-type]
-
-    return SampleTable(
-        sample_entry_types=tuple(sample_entry_types),
-        sample_sizes=tuple(sample_sizes),
-        chunk_offsets=tuple(chunk_offsets),
-        first_chunk=first_chunk,
-        samples_per_chunk=samples_per_chunk,
-    )
+    first_chunk, sample_description_index = _read_first_stsc_entry(handle, stsc)
+    if not 1 <= sample_description_index <= len(sample_entry_types):
+        raise Mp4ReaderError("stsc sample description 索引无效")
+    if sample_entry_types[sample_description_index - 1] != "djmd":
+        raise UnsupportedMp4Error("djmd 轨第一包使用其他 sample description，暂不支持")
+    if stsz is not None:
+        size = _read_first_stsz_size(handle, stsz)
+    else:
+        assert stz2 is not None
+        size = _read_first_stz2_size(handle, stz2)
+    offset_box = stco if stco is not None else co64
+    assert offset_box is not None
+    offset = _read_chunk_offset(handle, offset_box, first_chunk)
+    return offset, size
 
 
 def _read_stsd_sample_entry_types(handle: BinaryIO, box: Box) -> list[str]:
     """读取 stsd 中的 sample entry type，例如 `djmd`。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 8:
-        raise Mp4ReaderError("stsd 数据过短")
-
+    payload = _read_box_bytes(handle, box, 0, 8)
     entry_count = struct.unpack_from(">I", payload, 4)[0]
+    if entry_count > MAX_BOX_COUNT:
+        raise Mp4ReaderError("stsd sample entry 数量超过允许范围")
     offset = 8
     entry_types: list[str] = []
     for _ in range(entry_count):
-        if offset + 8 > len(payload):
-            raise Mp4ReaderError("stsd sample entry 不完整")
-        entry_size, entry_type_raw = struct.unpack_from(">I4s", payload, offset)
-        if entry_size < 8 or offset + entry_size > len(payload):
+        entry = _read_box_bytes(handle, box, offset, 8)
+        entry_size, entry_type_raw = struct.unpack(">I4s", entry)
+        if entry_size < 8 or offset + entry_size > box.size - box.header_size:
             raise Mp4ReaderError("stsd sample entry 大小无效")
         entry_types.append(entry_type_raw.decode("latin1"))
         offset += entry_size
     return entry_types
 
 
-def _read_stsz(handle: BinaryIO, box: Box) -> list[int]:
-    """读取 stsz sample size 表。"""
+def _read_first_stsz_size(handle: BinaryIO, box: Box) -> int:
+    """读取 stsz 第一包尺寸，固定尺寸只返回标量，不按 sample_count 展开。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 12:
-        raise Mp4ReaderError("stsz 数据过短")
+    payload = _read_box_bytes(handle, box, 0, 12)
     sample_size, sample_count = struct.unpack_from(">II", payload, 4)
     if sample_count == 0:
         raise Mp4ReaderError("stsz sample_count 为 0")
     if sample_size != 0:
-        return [sample_size] * sample_count
+        return sample_size
     expected = 12 + sample_count * 4
-    if len(payload) < expected:
+    if box.size - box.header_size < expected:
         raise Mp4ReaderError("stsz sample size 表不完整")
-    return list(struct.unpack_from(f">{sample_count}I", payload, 12))
+    return struct.unpack(">I", _read_box_bytes(handle, box, 12, 4))[0]
 
 
-def _read_stz2(handle: BinaryIO, box: Box) -> list[int]:
-    """读取 compact sample size 表。"""
+def _read_first_stz2_size(handle: BinaryIO, box: Box) -> int:
+    """读取 compact sample size 表的第一项，并以 box 长度验证声明计数。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 12:
-        raise Mp4ReaderError("stz2 数据过短")
+    payload = _read_box_bytes(handle, box, 0, 12)
     field_size = payload[7]
     sample_count = struct.unpack_from(">I", payload, 8)[0]
-    data = payload[12:]
-
-    if field_size == 4:
-        if len(data) * 2 < sample_count:
-            raise Mp4ReaderError("stz2 4-bit sample size 表不完整")
-        sizes: list[int] = []
-        for byte in data:
-            sizes.append(byte >> 4)
-            if len(sizes) == sample_count:
-                break
-            sizes.append(byte & 0x0F)
-            if len(sizes) == sample_count:
-                break
-        return sizes
-    if field_size == 8:
-        if len(data) < sample_count:
-            raise Mp4ReaderError("stz2 8-bit sample size 表不完整")
-        return list(data[:sample_count])
-    if field_size == 16:
-        if len(data) < sample_count * 2:
-            raise Mp4ReaderError("stz2 16-bit sample size 表不完整")
-        return list(struct.unpack_from(f">{sample_count}H", data, 0))
-    raise Mp4ReaderError(f"不支持的 stz2 field_size：{field_size}")
+    if sample_count == 0:
+        raise Mp4ReaderError("stz2 sample_count 为 0")
+    if field_size not in (4, 8, 16):
+        raise Mp4ReaderError(f"不支持的 stz2 field_size：{field_size}")
+    expected = 12 + (sample_count * field_size + 7) // 8
+    if box.size - box.header_size < expected:
+        raise Mp4ReaderError(f"stz2 {field_size}-bit sample size 表不完整")
+    raw = _read_box_bytes(handle, box, 12, 2 if field_size == 16 else 1)
+    return raw[0] >> 4 if field_size == 4 else int.from_bytes(raw, "big")
 
 
 def _read_first_stsc_entry(handle: BinaryIO, box: Box) -> tuple[int, int]:
-    """读取 stsc 第一条映射。第一包 sample 一定位于第一条映射的 first_chunk。"""
+    """读取第一条 chunk 映射，保留 sample description 索引以验证第一包类型。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 20:
-        raise Mp4ReaderError("stsc 数据过短")
+    payload = _read_box_bytes(handle, box, 0, 20)
     entry_count = struct.unpack_from(">I", payload, 4)[0]
     if entry_count == 0:
         raise Mp4ReaderError("stsc entry_count 为 0")
-    first_chunk, samples_per_chunk, _sample_description_index = struct.unpack_from(">III", payload, 8)
-    return first_chunk, samples_per_chunk
+    if box.size - box.header_size < 8 + entry_count * 12:
+        raise Mp4ReaderError("stsc 映射表不完整")
+    first_chunk, samples_per_chunk, sample_description_index = struct.unpack_from(">III", payload, 8)
+    if first_chunk != 1 or samples_per_chunk <= 0:
+        raise Mp4ReaderError("stsc 第一条 chunk 映射无效")
+    return first_chunk, sample_description_index
 
 
-def _read_stco(handle: BinaryIO, box: Box) -> list[int]:
-    """读取 32 位 chunk offset 表。"""
+def _read_chunk_offset(handle: BinaryIO, box: Box, chunk_index: int) -> int:
+    """读取指定 chunk 偏移，兼容 stco/co64，不分配完整偏移数组。"""
 
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 8:
-        raise Mp4ReaderError("stco 数据过短")
+    payload = _read_box_bytes(handle, box, 0, 8)
     entry_count = struct.unpack_from(">I", payload, 4)[0]
-    expected = 8 + entry_count * 4
-    if len(payload) < expected:
-        raise Mp4ReaderError("stco offset 表不完整")
-    return list(struct.unpack_from(f">{entry_count}I", payload, 8))
-
-
-def _read_co64(handle: BinaryIO, box: Box) -> list[int]:
-    """读取 64 位 chunk offset 表。"""
-
-    handle.seek(box.payload_start)
-    payload = handle.read(box.size - box.header_size)
-    if len(payload) < 8:
-        raise Mp4ReaderError("co64 数据过短")
-    entry_count = struct.unpack_from(">I", payload, 4)[0]
-    expected = 8 + entry_count * 8
-    if len(payload) < expected:
-        raise Mp4ReaderError("co64 offset 表不完整")
-    return list(struct.unpack_from(f">{entry_count}Q", payload, 8))
-
-
-def _first_sample_location(table: SampleTable) -> tuple[int, int]:
-    """计算第一包 sample 的文件偏移和长度。"""
-
-    if not table.sample_sizes:
-        raise Mp4ReaderError("sample size 表为空")
-    if not table.chunk_offsets:
-        raise Mp4ReaderError("chunk offset 表为空")
-    if table.first_chunk <= 0 or table.first_chunk > len(table.chunk_offsets):
+    if not 1 <= chunk_index <= entry_count:
         raise Mp4ReaderError("stsc first_chunk 超出 chunk offset 表范围")
-    if table.samples_per_chunk <= 0:
-        raise Mp4ReaderError("stsc samples_per_chunk 无效")
-    return table.chunk_offsets[table.first_chunk - 1], table.sample_sizes[0]
+    width = 4 if box.type == "stco" else 8
+    if box.size - box.header_size < 8 + entry_count * width:
+        raise Mp4ReaderError(f"{box.type} offset 表不完整")
+    return int.from_bytes(_read_box_bytes(handle, box, 8 + (chunk_index - 1) * width, width), "big")
 
 
 def _find_direct_child(box: Box, box_type: str) -> Box | None:

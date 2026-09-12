@@ -12,6 +12,8 @@
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const PAGE_SIZE = 100;
+  const SEARCH_DELAY = 180;
   const modeClasses = { dlog: "dlog", dlog2: "dlog2", rec709: "rec709", rec2100_hlg: "hlg" };
   const modeLabels = {
     dlog: "D-Log",
@@ -27,12 +29,16 @@
     root: "",
     scanId: "",
     files: [],
+    filteredFiles: [],
+    page: 1,
     filter: "all",
     mode: "copy",
     activeTask: "",
     activeKind: "",
     submitting: false,
     needsRescan: false,
+    cancelRequested: false,
+    searchTimer: 0,
     toastTimer: 0,
     dragDepth: 0,
   };
@@ -87,11 +93,30 @@
     $("#recursiveToggle").disabled = busy;
     $$(".mode-option").forEach((button) => { button.disabled = busy; });
     $("#cancelTask").hidden = !state.activeTask;
-    $("#cancelTask").disabled = !state.activeTask;
+    $("#cancelTask").disabled = !state.activeTask || state.cancelRequested;
+    $("#cancelTask").textContent = state.cancelRequested ? "正在取消…" : "取消任务";
     $("#taskProgress").hidden = !busy;
     $("#executeOrganize").textContent = busy && state.activeKind === "organize"
       ? "正在整理…"
       : state.needsRescan ? "请重新识别后再整理" : "执行整理";
+  }
+
+  /** 有总数时显示实际进度；目录枚举等未知总数阶段保留等待动画。 */
+  function updateTaskProgress(task = {}) {
+    const total = Number.isFinite(task.total) ? Math.max(0, task.total) : 0;
+    const completed = Number.isFinite(task.completed) ? Math.min(total, Math.max(0, task.completed)) : 0;
+    const progress = $("#taskProgress");
+    progress.classList.toggle("determinate", total > 0);
+    $("#taskProgressValue").style.width = total ? `${completed / total * 100}%` : "";
+    if (total) {
+      progress.setAttribute("aria-valuemax", String(total));
+      progress.setAttribute("aria-valuenow", String(completed));
+    } else {
+      progress.removeAttribute("aria-valuemax");
+      progress.removeAttribute("aria-valuenow");
+    }
+    const message = state.cancelRequested ? "正在取消，等待当前文件完成" : task.message;
+    if (message) $("#folderDetail").textContent = total ? `${message} · ${completed} / ${total}` : message;
   }
 
   /**
@@ -152,12 +177,27 @@
     return file.mode === state.filter;
   }
 
-  function renderResults() {
+  /** 仅在搜索、筛选或扫描结果变化时遍历数据，翻页复用筛选结果。 */
+  function filterResults() {
+    window.clearTimeout(state.searchTimer);
     const keyword = $("#searchInput").value.trim().toLowerCase();
-    const visible = state.files.filter((file) => {
-      const searchText = `${file.name || ""} ${file.relative_path || ""}`.toLowerCase();
-      return matchesFilter(file) && (!keyword || searchText.includes(keyword));
-    });
+    state.filteredFiles = state.files.filter((file) => matchesFilter(file) && (!keyword || file.searchText.includes(keyword)));
+    state.page = 1;
+    renderResults();
+  }
+
+  function scheduleSearch() {
+    window.clearTimeout(state.searchTimer);
+    state.searchTimer = window.setTimeout(filterResults, SEARCH_DELAY);
+  }
+
+  /** 一页最多创建固定数量的行，避免数万条结果阻塞桌面界面。 */
+  function renderResults() {
+    const total = state.filteredFiles.length;
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    state.page = Math.min(pages, Math.max(1, state.page));
+    const start = (state.page - 1) * PAGE_SIZE;
+    const visible = state.filteredFiles.slice(start, start + PAGE_SIZE);
     const body = $("#resultBody");
     body.replaceChildren();
     visible.forEach((file) => {
@@ -183,7 +223,13 @@
       cell.textContent = state.files.length ? "没有匹配的文件" : "尚未扫描文件夹";
       body.appendChild(row);
     }
-    $("#tableCount").textContent = `显示 ${visible.length} 个文件 · 共 ${state.files.length} 个文件`;
+    $("#tableCount").textContent = total
+      ? `显示 ${start + 1}–${start + visible.length} 项 · 匹配 ${total} 项 · 共 ${state.files.length} 项`
+      : `匹配 0 项 · 共 ${state.files.length} 项`;
+    $("#pageNumber").textContent = `${state.page} / ${pages}`;
+    $("#previousPage").disabled = state.page <= 1;
+    $("#nextPage").disabled = state.page >= pages;
+    $("#resultTableWrap").scrollTop = 0;
   }
 
   function setFilter(filter) {
@@ -193,7 +239,7 @@
       element.classList.toggle("active", selected);
       element.setAttribute("aria-pressed", String(selected));
     });
-    renderResults();
+    filterResults();
   }
 
   function renderOutcome(result, taskState) {
@@ -204,6 +250,7 @@
     $("#successCount").textContent = String(result.success_count || 0);
     $("#skippedCount").textContent = String(result.skipped_count || 0);
     $("#failedCount").textContent = String(result.failed_count || 0);
+    $("#pendingCount").textContent = String(result.pending_count || 0);
     $("#outcomeCopy").textContent = taskState === "cancelled" || result.cancelled
       ? "任务已取消，以下是取消前已经发生的处理结果。"
       : "整理任务已结束。";
@@ -221,15 +268,35 @@
 
   async function pollTask(taskId, onTerminal) {
     state.activeTask = taskId;
+    // 句柄到达后立即显示取消入口，不能等到终态才刷新控件。
+    refreshControls();
+    let pollFailures = 0;
     while (true) {
-      const task = await callApi("get_task_status", taskId);
+      let task;
+      try {
+        task = await callApi("get_task_status", taskId);
+        if (!["queued", "running", "completed", "cancelled", "failed"].includes(task.state)) {
+          throw new Error("本地服务返回了未知任务状态");
+        }
+        if (pollFailures) setConnection(true);
+        pollFailures = 0;
+      } catch (error) {
+        // 通信失败不代表任务结束：保留任务句柄和操作锁，恢复连接后继续收敛终态。
+        pollFailures += 1;
+        setConnection(false, "任务状态连接中断");
+        $("#folderDetail").textContent = "暂时无法读取任务状态，正在重试…";
+        if (pollFailures === 1) showToast("正在恢复任务状态", bridgeError(error), true);
+        await sleep(Math.min(3000, pollFailures * 1000));
+        continue;
+      }
+      updateTaskProgress(task);
       if (task.state === "queued" || task.state === "running") {
-        $("#folderDetail").textContent = task.message || "正在处理…";
         await sleep(180);
         continue;
       }
       state.activeTask = "";
       state.activeKind = "";
+      state.cancelRequested = false;
       if (task.state === "failed") throw new Error(task.error || "任务执行失败");
       // 终态回调会写入 scanId 或 needsRescan；必须在回调之后刷新按钮状态。
       const result = onTerminal(task.result || {}, task.state);
@@ -249,6 +316,7 @@
     state.files = [];
     state.filter = "all";
     state.needsRescan = false;
+    state.cancelRequested = false;
     $("#searchInput").value = "";
     $("#folderPath").textContent = selectedRoot;
     $("#folderPath").title = selectedRoot;
@@ -258,6 +326,7 @@
     setFilter("all");
     state.activeKind = "scan";
     state.submitting = true;
+    updateTaskProgress();
     refreshControls();
     try {
       const handle = await callApi("start_scan", { directory: selectedRoot, recursive: $("#recursiveToggle").checked });
@@ -269,18 +338,22 @@
           return;
         }
         state.scanId = result.scan_id;
-        state.files = result.results || [];
+        state.files = (result.results || []).map((file) => ({
+          ...file,
+          searchText: `${file.name || ""} ${file.relative_path || ""}`.toLowerCase(),
+        }));
         $("#folderPath").textContent = result.root || selectedRoot;
         $("#folderPath").title = result.root || selectedRoot;
         $("#folderDetail").textContent = `${result.recursive ? "包含子文件夹" : "仅当前文件夹"} · 识别完成`;
         updateSummary();
-        renderResults();
+        filterResults();
         showToast("识别完成", `发现 ${state.files.length} 个视频。`);
       });
     } catch (error) {
       state.activeTask = "";
       state.activeKind = "";
       state.submitting = false;
+      $("#folderDetail").textContent = "识别失败，请重新识别";
       refreshControls();
       showToast("识别失败", bridgeError(error), true);
     }
@@ -305,12 +378,20 @@
 
   async function executeOrganize() {
     if (isBusy()) return;
+    if (state.needsRescan) {
+      showToast("需要重新识别", "上次整理已提交，请重新识别后再整理。", true);
+      return;
+    }
     if (!state.scanId) {
       showToast("尚未完成识别", "请先选择素材文件夹并等待识别完成。", true);
       return;
     }
     state.activeKind = "organize";
     state.submitting = true;
+    state.cancelRequested = false;
+    // 即使桥接丢失提交响应，后台也可能已经修改文件，不能继续使用本次扫描。
+    state.needsRescan = true;
+    updateTaskProgress({ message: "正在提交整理任务…" });
     refreshControls();
     try {
       const handle = await callApi("execute_organize", {
@@ -325,7 +406,7 @@
         // 文件系统已经发生变化，必须重新扫描后才能再次整理，避免复用陈旧结果。
         state.needsRescan = true;
         const title = taskState === "cancelled" ? "整理已取消" : result.failed_count ? "整理完成，但有失败项" : "整理完成";
-        const copy = `成功 ${result.success_count || 0} 个，跳过 ${result.skipped_count || 0} 个，失败 ${result.failed_count || 0} 个。`;
+        const copy = `成功 ${result.success_count || 0} 个，跳过 ${result.skipped_count || 0} 个，失败 ${result.failed_count || 0} 个，未执行 ${result.pending_count || 0} 个。`;
         showToast(title, copy, Boolean(result.failed_count));
         $("#folderDetail").textContent = taskState === "cancelled" ? "整理已取消，已显示部分结果" : "整理已完成，已显示处理结果";
       });
@@ -333,17 +414,25 @@
       state.activeTask = "";
       state.activeKind = "";
       state.submitting = false;
+      $("#folderDetail").textContent = "整理失败，请重新识别后再整理";
       refreshControls();
       showToast("整理失败", bridgeError(error), true);
     }
   }
 
   async function cancelActiveTask() {
-    if (!state.activeTask) return;
+    if (!state.activeTask || state.cancelRequested) return;
+    const taskId = state.activeTask;
+    state.cancelRequested = true;
+    refreshControls();
     try {
-      await callApi("cancel_task", state.activeTask);
+      await callApi("cancel_task", taskId);
+      if (state.activeTask !== taskId) return;
       showToast("已请求取消", "当前文件完成后将停止后续处理。");
     } catch (error) {
+      if (state.activeTask !== taskId) return;
+      state.cancelRequested = false;
+      refreshControls();
       showToast("取消任务失败", bridgeError(error), true);
     }
   }
@@ -385,9 +474,10 @@
       $("#searchInput").select();
       return;
     }
-    if (event.key === "F5" && state.root && !isBusy()) {
+    if (event.key === "F5" || (modifier && event.key.toLowerCase() === "r")) {
+      // 页面重载会丢失后台任务句柄；统一解释为闲置时重新识别。
       event.preventDefault();
-      void startScan(state.root);
+      if (state.root && !isBusy()) void startScan(state.root);
       return;
     }
     if (event.key === "Escape") {
@@ -411,7 +501,9 @@
 
   function bindEvents() {
     $$("[data-filter]").forEach((element) => element.addEventListener("click", () => setFilter(element.dataset.filter)));
-    $("#searchInput").addEventListener("input", renderResults);
+    $("#searchInput").addEventListener("input", scheduleSearch);
+    $("#previousPage").addEventListener("click", () => { state.page -= 1; renderResults(); });
+    $("#nextPage").addEventListener("click", () => { state.page += 1; renderResults(); });
     $("#chooseFolder").addEventListener("click", chooseFolder);
     $("#changeFolder").addEventListener("click", chooseFolder);
     $("#rescanFolder").addEventListener("click", () => startScan(state.root));

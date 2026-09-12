@@ -21,7 +21,12 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # 正式包使用 Windows WebView2 / macOS WebKit，避免开发环境的历史 Qt
+    # 依赖被动态后端收集进来，增加体积并引入不必要的 DLL 冲突。
+    excludes=[
+        "webview.platforms.qt", "webview.platforms.gtk", "webview.platforms.android", "webview.platforms.cef",
+        "PyQt5", "PyQt6", "PySide2", "PySide6", "qtpy",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

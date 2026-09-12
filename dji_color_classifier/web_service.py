@@ -26,7 +26,7 @@ from dji_color_classifier.core.models import (
 )
 from dji_color_classifier.core.planner import build_plan as build_core_plan
 from dji_color_classifier.core.report import write_report
-from dji_color_classifier.core.scanner import iter_video_files, scan_directory, summarize_results
+from dji_color_classifier.core.scanner import scan_directory, summarize_results
 
 
 LOGGER = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ class ApplicationService:
         self._scans: dict[str, dict[str, Any]] = {}
         # 同一素材根目录只允许一个整理任务，避免并发计划互相抢占目标路径。
         self._organizing_roots: set[Path] = set()
+        self._scanning_roots: set[Path] = set()
 
     def close(self) -> None:
         """取消剩余工作并关闭线程池，应用退出时调用。"""
@@ -92,8 +93,8 @@ class ApplicationService:
             task.cancel_event.set()
         if active_tasks:
             LOGGER.info("应用正在退出，已请求取消 %s 个后台任务", len(active_tasks))
-        # 等待当前单个文件完成，避免窗口关闭后仍在后台继续批量移动或复制。
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        # 已取消的排队任务仍进入收尾流程，释放目录互斥并返回明确的取消终态。
+        self._executor.shutdown(wait=True)
 
     def get_state(self) -> dict[str, Any]:
         """返回前端初始化所需的服务状态。"""
@@ -111,19 +112,25 @@ class ApplicationService:
         payload = _options_dict(options)
         root = _require_directory(payload.get("directory") or payload.get("root"))
         recursive = bool(payload.get("recursive", True))
+        with self._lock:
+            if any(_roots_overlap(root, active_root) for active_root in self._organizing_roots):
+                raise RuntimeError(f"该目录已有整理任务正在执行，请等待结束后识别：{root}")
+            if any(_roots_overlap(root, active_root) for active_root in self._scanning_roots):
+                raise RuntimeError(f"该目录正在识别，请等待扫描结束：{root}")
+            self._scanning_roots.add(root)
         LOGGER.info("提交扫描任务：目录=%s，递归=%s", root, recursive)
 
-        def work(task: _Task) -> dict[str, Any]:
-            files = iter_video_files(root, recursive=recursive)
+        def read_directory(task: _Task) -> dict[str, Any]:
+            """只在持有目录任务互斥的期间枚举和保存扫描快照。"""
+
             with task.lock:
-                task.total = len(files)
-                task.message = f"待识别 {len(files)} 个视频"
+                task.message = "正在枚举视频文件"
             results = scan_directory(
                 root,
                 recursive=recursive,
                 cancel_event=task.cancel_event,
                 on_progress=lambda completed, total, path: self._update_progress(
-                    task, completed, total, f"正在识别：{path.name}"
+                    task, completed, total, f"正在识别：{path.name}" if completed else f"待识别 {total} 个视频"
                 ),
             )
             if task.cancel_event.is_set():
@@ -132,7 +139,9 @@ class ApplicationService:
 
             scan_id = _new_id("scan")
             with self._lock:
-                self._scans[scan_id] = {"root": root, "recursive": recursive, "results": results}
+                self._scans[scan_id] = {
+                    "root": root, "recursive": recursive, "results": results, "needs_rescan": False
+                }
                 self._trim_retained_state()
             LOGGER.info("扫描完成：%s，共 %s 个视频", root, len(results))
             return {
@@ -143,7 +152,19 @@ class ApplicationService:
                 "summary": _summary_to_dto(results),
             }
 
-        return self._submit("scan", work)
+        def work(task: _Task) -> dict[str, Any]:
+            try:
+                return read_directory(task)
+            finally:
+                with self._lock:
+                    self._scanning_roots.discard(root)
+
+        try:
+            return self._submit("scan", work)
+        except Exception:
+            with self._lock:
+                self._scanning_roots.discard(root)
+            raise
 
     def execute_organize(self, options: dict[str, Any]) -> dict[str, Any]:
         """按当前设置直接整理已扫描目录，不创建预演或操作记录。"""
@@ -163,14 +184,24 @@ class ApplicationService:
         root = scan["root"]
 
         with self._lock:
-            if root in self._organizing_roots:
+            if any(_roots_overlap(root, active_root) for active_root in self._organizing_roots):
                 raise RuntimeError(f"该目录已有整理任务正在执行：{root}")
+            if any(_roots_overlap(root, active_root) for active_root in self._scanning_roots):
+                raise RuntimeError(f"该目录正在识别，请等待扫描结束：{root}")
+            if scan.get("needs_rescan"):
+                raise ValueError("该扫描结果已用于整理，请重新识别后再执行")
             self._organizing_roots.add(root)
+            # 一旦提交即使前端丢失响应，也不能重复使用可能已改变的文件路径。
+            for retained_scan in self._scans.values():
+                if _roots_overlap(root, retained_scan["root"]):
+                    retained_scan["needs_rescan"] = True
 
         LOGGER.info("提交直接整理任务：目录=%s，方式=%s，冲突策略=%s", root, mode, conflict.value)
 
         def work(task: _Task) -> dict[str, Any]:
             try:
+                if task.cancel_event.is_set():
+                    return _organize_result_to_dto([], plan=[], cancelled=True)
                 # 在后台任务开始时即时构建计划，缩短扫描与文件操作之间的时间差。
                 plan = _build_web_organize_plan(
                     scan["results"],
@@ -179,6 +210,7 @@ class ApplicationService:
                     conflict_policy=conflict,
                     with_sidecars=with_sidecars,
                 )
+                self._update_progress(task, 0, len(plan), f"待处理 {len(plan)} 个文件")
                 records = execute_core_plan(
                     plan,
                     apply=True,
@@ -210,16 +242,16 @@ class ApplicationService:
         return task.snapshot()
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
-        """请求取消任务；当前单个文件完成后才会停止。"""
+        """请求取消任务；复制会在下一个数据块边界清理临时文件。"""
 
         with self._lock:
             task = self._tasks.get(str(task_id))
         if task is None:
             raise ValueError(f"任务不存在：{task_id}")
-        task.cancel_event.set()
         with task.lock:
             if task.state in {"queued", "running"}:
-                task.message = "正在取消，等待当前文件完成"
+                task.cancel_event.set()
+                task.message = "正在取消，等待文件操作安全结束"
         LOGGER.info("已请求取消任务：%s", task_id)
         return task.snapshot()
 
@@ -338,15 +370,6 @@ def _build_web_organize_plan(
         conflict_policy=conflict_policy,
         with_sidecars=with_sidecars,
     )
-    if conflict_policy is ConflictPolicy.ERROR:
-        # core 计划以 skipped 表示预演阶段发现的冲突；Web 选项明确写作“标记为失败”，
-        # 因此让执行器安全地再次检查目标并生成失败记录，保证统计和明细语义一致。
-        actionable = [
-            PlanItem(item.source, item.target, item.action, item.scan_result, reason=item.reason)
-            if item.skipped and item.action is not PlanAction.NONE and item.target is not None
-            else item
-            for item in actionable
-        ]
     return [*actionable, *skipped]
 
 
@@ -373,9 +396,23 @@ def _organize_result_to_dto(
         "success_count": success_count,
         "failed_count": failed_count,
         "skipped_count": skipped_count,
+        "pending_count": len(plan) - len(records),
         "cancelled": cancelled,
-        "records": [_execution_record_to_dto(record) for record in records],
+        "records": [
+            _execution_record_to_dto(
+                record,
+                status="skipped" if item.skipped or item.action is PlanAction.NONE
+                else "completed" if record.success else "failed",
+            )
+            for item, record in zip(completed_items, records, strict=True)
+        ],
     }
+
+
+def _roots_overlap(first: Path, second: Path) -> bool:
+    """父子目录共享素材，整理时应使用同一互斥边界。"""
+
+    return first.is_relative_to(second) or second.is_relative_to(first)
 
 
 def _options_dict(options: dict[str, Any] | str) -> dict[str, Any]:
@@ -473,10 +510,11 @@ def _confidence_label(confidence: str) -> str:
     return {"high": "高置信度", "medium": "中置信度", "low": "低置信度"}.get(confidence, "待确认")
 
 
-def _execution_record_to_dto(record: ExecutionRecord) -> dict[str, Any]:
+def _execution_record_to_dto(record: ExecutionRecord, *, status: str) -> dict[str, Any]:
     """转换执行结果。"""
 
     return {
+        "status": status,
         "source": str(record.source),
         "target": str(record.target) if record.target else None,
         "action": record.action.value,

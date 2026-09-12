@@ -11,6 +11,10 @@
 
 reader 不解码视频，不读取画面内容，也不修改 MP4 文件。
 
+分类流程通过同一个文件句柄和 box 树读取两种证据。读取器先检查 `stsd`
+确定 `djmd` 轨，再按需读取首个 sample 的尺寸、chunk 映射和偏移，不创建完整
+sample 表。单次元数据读取和 djmd 包限制为 8 MiB，容器最多嵌套 32 层。
+
 除 `djmd` 外，reader 还会在 `moov/meta` 或 `moov/udta/meta` 中解析 QuickTime
 `keys/ilst/data` 标签。DJI Osmo Pocket 等机型会将明确的色彩模式写入
 `com.dji.camera.ColorGammaSxS`，例如 `D-Log`、`D-Log2`、`Rec.709`、
@@ -46,5 +50,13 @@ reader 不解码视频，不读取画面内容，也不修改 MP4 文件。
 - `export_report`：导出扫描报告。
 
 Web 服务对同一个扫描根目录加整理互斥，并跳过无法确认、元数据冲突和识别失败的文件。取消整理时会返回取消前已完成的结果，前端必须展示该结果；CLI 和原生 GUI 保留预演、manifest 与撤销能力。
+
+扫描与整理共用包含父子目录关系的任务互斥。整理提交后，对应扫描结果即失效，
+需要重新识别后才能再次整理；原扫描仍可用于导出报告。任务结果中分别保留
+`completed`、`skipped`、`failed` 状态，`pending_count` 表示取消后尚未完成的计划项。
+
+复制按固定大小的数据块写入目标目录内的临时文件，核对尺寸与源文件状态后以
+排他重命名发布。取消或失败会清理临时文件；发布前新出现的同名目标不会被覆盖。
+视频与伴随文件在计划阶段共用冲突策略和编号，避免整理后的文件失去同名关系。
 
 `dji_color_classifier/web_app.py` 只负责 pywebview 窗口和系统文件对话框。原型页面使用同一组 DTO，因此后续替换为 Vue 3 + TypeScript 或 Tauri 2 时，不需要重写识别和文件整理核心。

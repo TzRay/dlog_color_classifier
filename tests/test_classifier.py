@@ -76,3 +76,29 @@ def test_conflicting_explicit_label_and_djmd_enum_returns_unknown() -> None:
     assert mode is ColorMode.UNKNOWN
     assert evidence.primary_source == "conflict"
     assert evidence.warnings
+
+
+def test_unrelated_string_does_not_interrupt_known_gamma() -> None:
+    """已知枚举旁的合法字符串不应造成分类失败。"""
+
+    packet = color_gamma_packet(22) + field_message(100, b"x")
+    mode, evidence = classify_djmd_packet(packet)
+    assert mode is ColorMode.DLOG2
+    assert not evidence.warnings
+
+
+def test_bad_packet_returns_error_without_label() -> None:
+    """损坏的 djmd 应返回失败结果，不能向批量扫描传播解析异常。"""
+
+    mode, evidence = classify_djmd_packet(b"\x08\x80")
+    assert mode is ColorMode.ERROR
+    assert evidence.warnings
+
+
+def test_bad_packet_falls_back_to_explicit_label() -> None:
+    """独立的明确标签应在 djmd 损坏时继续生效，并附上诊断。"""
+
+    mode, evidence = classify_djmd_packet(b"\x08\x80", metadata_label="D-Log2")
+    assert mode is ColorMode.DLOG2
+    assert evidence.primary_source == "quicktime_mdta"
+    assert evidence.warnings

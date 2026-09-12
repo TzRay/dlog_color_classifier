@@ -5,12 +5,25 @@
 ## 开发环境
 
 ```powershell
-python -m pip install -e ".[gui,dev]"
+python -m pip install -e ".[web,dev]"
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
 pytest -q tests
+node --test tests/web_runtime.test.cjs
+python -m ruff check dji_color_classifier tests scripts classify_dji_color_modes.py rename_dji_color_modes.py
 ```
 
-如果本机没有 PySide6，但有 PyQt5，也可以运行 GUI 冒烟测试。发布包仍优先使用 PySide6。
+当前维护和发布的入口为 Web 桌面版。运行 JavaScript 行为测试需要 Node.js 22 或以上；
+历史 Qt 测试在没有对应依赖时自动跳过，不作为桌面版验收依据。
+
+打包后需要验证实际可执行程序，而不仅是源码测试：
+
+```powershell
+pyinstaller --clean --noconfirm packaging/dji-color-web.spec
+python scripts/verify_bundle.py dist/dji-color-web.exe
+```
+
+macOS 将最后一个路径替换为 `dist/dji-color-web`。自检不显示窗口，仅在临时目录中
+验证 Web 资源、平台依赖、元数据识别与复制；不能替代原生拖放和窗口布局的实机检查。
 
 ## 代码要求
 

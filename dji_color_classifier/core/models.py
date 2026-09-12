@@ -95,6 +95,8 @@ class PlanItem:
     scan_result: ScanResult
     skipped: bool = False
     reason: str | None = None
+    # 计划期已发现的错误必须产生失败记录，不能伪装成跳过或再次尝试文件操作。
+    blocked: bool = False
 
 
 @dataclass

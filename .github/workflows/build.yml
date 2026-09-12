@@ -16,10 +16,12 @@ jobs:
           - os: windows-latest
             target: windows-web
             spec: packaging/dji-color-web.spec
+            executable: dist/dji-color-web.exe
             artifact: dji-color-web-windows-x64
           - os: macos-14
             target: macos-web-arm64
             spec: packaging/dji-color-web.spec
+            executable: dist/dji-color-web
             artifact: dji-color-web-macos-arm64
 
     steps:
@@ -29,6 +31,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install dependencies
         run: python -m pip install -e ".[web,dev]" pyinstaller
 
@@ -37,8 +43,14 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: python -m pytest -q tests
 
+      - name: Web runtime tests
+        run: node --test tests/web_runtime.test.cjs
+
       - name: Build artifact
         run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
+
+      - name: Verify packaged app
+        run: python scripts/verify_bundle.py ${{ matrix.executable }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

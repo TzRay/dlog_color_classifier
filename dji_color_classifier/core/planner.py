@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from dji_color_classifier.core.models import ColorMode, ConflictPolicy, PlanAction, PlanItem, ScanResult
@@ -41,25 +42,27 @@ def build_plan(
 
     plan: list[PlanItem] = []
     planned_targets: set[Path] = set()
+    sidecar_indexes: dict[Path, dict[str, list[Path]]] = {}
     for result in results:
         item = _build_item(
             result,
             root=root,
             mode=mode,
-            conflict_policy=conflict_policy,
             name_template=name_template,
             dir_template=dir_template,
-            planned_targets=planned_targets,
         )
-        if item.target is not None:
-            planned_targets.add(item.target.resolve())
-        plan.append(item)
+        group = [item]
         if with_sidecars and item.target is not None and not item.skipped and item.action is not PlanAction.NONE:
-            sidecars = _build_sidecar_items(item, planned_targets, conflict_policy)
-            for sidecar in sidecars:
-                if sidecar.target is not None:
-                    planned_targets.add(sidecar.target.resolve())
-            plan.extend(sidecars)
+            directory = item.source.parent
+            if directory not in sidecar_indexes:
+                sidecar_indexes[directory] = _index_sidecars(directory)
+            group.extend(_build_sidecar_items(item, sidecar_indexes[directory].get(item.source.stem, [])))
+
+        group = _resolve_group_conflicts(group, planned_targets, conflict_policy)
+        for grouped_item in group:
+            if grouped_item.target is not None and not grouped_item.skipped and not grouped_item.blocked:
+                planned_targets.add(grouped_item.target.resolve())
+        plan.extend(group)
     return plan
 
 
@@ -68,10 +71,8 @@ def _build_item(
     *,
     root: Path,
     mode: str,
-    conflict_policy: ConflictPolicy,
     name_template: str | None,
     dir_template: str | None,
-    planned_targets: set[Path],
 ) -> PlanItem:
     """生成单个计划项。"""
 
@@ -90,14 +91,6 @@ def _build_item(
 
     if target is None or target == result.path:
         return PlanItem(result.path, None, PlanAction.NONE, result, skipped=True, reason="无需处理")
-
-    conflict = target.exists() or target.resolve() in planned_targets
-    if conflict:
-        if conflict_policy is ConflictPolicy.ERROR:
-            return PlanItem(result.path, target, action, result, skipped=True, reason="目标文件已存在")
-        if conflict_policy is ConflictPolicy.SKIP:
-            return PlanItem(result.path, target, action, result, skipped=True, reason="目标冲突，已跳过")
-        target = _append_suffix_until_free(target, planned_targets)
 
     return PlanItem(result.path, target, action, result)
 
@@ -166,32 +159,60 @@ def _render_directory_template(template: str, result: ScanResult) -> Path:
     return directory
 
 
-def _append_suffix_until_free(path: Path, planned_targets: set[Path]) -> Path:
-    """目标冲突时追加序号，直到找到可用路径。"""
+def _resolve_group_conflicts(
+    items: list[PlanItem], planned_targets: set[Path], conflict_policy: ConflictPolicy
+) -> list[PlanItem]:
+    """视频与伴随文件作为一组处理冲突，确保最终仍可按同名关联。"""
+
+    video = items[0]
+    if video.target is None or video.skipped:
+        return items
+    if not any(_target_conflicts(item.target, planned_targets) for item in items):
+        return items
+    if conflict_policy is ConflictPolicy.ERROR:
+        return [replace(item, blocked=True, reason="视频或伴随文件的目标已存在，整组未执行") for item in items]
+    if conflict_policy is ConflictPolicy.SKIP:
+        return [replace(item, skipped=True, reason="视频或伴随文件存在目标冲突，整组已跳过") for item in items]
 
     index = 1
     while True:
-        candidate = path.with_name(f"{path.stem}_{index:03d}{path.suffix}")
-        if not candidate.exists() and candidate.resolve() not in planned_targets:
-            return candidate
+        stem = f"{video.target.stem}_{index:03d}"
+        candidates = [
+            replace(item, target=item.target.with_name(f"{stem}{item.target.suffix}"))
+            for item in items
+            if item.target is not None
+        ]
+        if not any(_target_conflicts(item.target, planned_targets) for item in candidates):
+            return candidates
         index += 1
+
+
+def _target_conflicts(target: Path | None, planned_targets: set[Path]) -> bool:
+    """同时检查磁盘、悬空符号链接以及本批次已保留的目标。"""
+
+    return target is not None and (target.exists() or target.is_symlink() or target.resolve() in planned_targets)
+
+
+def _index_sidecars(directory: Path) -> dict[str, list[Path]]:
+    """每个目录仅遍历一次，按 basename 索引伴随文件。"""
+
+    index: dict[str, list[Path]] = {}
+    for path in sorted(directory.iterdir(), key=lambda path: path.name):
+        if path.suffix.lower() in SIDECAR_SUFFIXES and path.is_file():
+            index.setdefault(path.stem, []).append(path)
+    return index
 
 
 def _build_sidecar_items(
     video_item: PlanItem,
-    planned_targets: set[Path],
-    conflict_policy: ConflictPolicy,
+    sidecars: list[Path],
 ) -> list[PlanItem]:
-    """为视频的同名伴随文件生成同步整理计划，并遵守统一冲突策略。"""
+    """从目录索引生成伴随文件计划，冲突稍后交由整组统一处理。"""
 
     assert video_item.target is not None
     items: list[PlanItem] = []
-    for sidecar in video_item.source.parent.iterdir():
-        if not sidecar.is_file() or sidecar == video_item.source:
-            continue
-        if sidecar.stem != video_item.source.stem:
-            continue
-        if sidecar.suffix.lower() not in SIDECAR_SUFFIXES:
+    for sidecar in sidecars:
+        if sidecar == video_item.source:
             continue
 
         target = video_item.target.with_suffix(sidecar.suffix)
@@ -201,18 +222,5 @@ def _build_sidecar_items(
             evidence=video_item.scan_result.evidence,
             size=sidecar.stat().st_size,
         )
-        if target.exists() or target.resolve() in planned_targets:
-            if conflict_policy is ConflictPolicy.ERROR:
-                items.append(
-                    PlanItem(sidecar, target, video_item.action, sidecar_result, skipped=True, reason="目标文件已存在")
-                )
-                continue
-            if conflict_policy is ConflictPolicy.SKIP:
-                items.append(
-                    PlanItem(sidecar, target, video_item.action, sidecar_result, skipped=True, reason="目标冲突，已跳过")
-                )
-                continue
-            target = _append_suffix_until_free(target, planned_targets)
-
         items.append(PlanItem(sidecar, target, video_item.action, sidecar_result))
     return items

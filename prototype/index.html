@@ -51,6 +51,7 @@
       .task-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; overflow: hidden; background: rgba(186, 68, 58, .12); }
       .task-progress[hidden] { display: none; }
       .task-progress span { display: block; width: 34%; height: 100%; background: var(--accent); animation: task-progress 1.1s ease-in-out infinite; }
+      .task-progress.determinate span { animation: none; transition: width .15s ease-out; }
       @keyframes task-progress { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
 
       /* 统计同时承担筛选功能，避免页面再出现一套重复筛选器。 */
@@ -83,7 +84,9 @@
       .status.error { color: var(--danger); background: #fff0ef; }
       .mode-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #81756e; }
       .mode-dot.dlog { background: #6d8b60; } .mode-dot.dlog2 { background: #6685aa; } .mode-dot.rec709 { background: #bc8a41; } .mode-dot.hlg { background: #9b70a5; }
-      .table-footer { flex: 0 0 auto; margin-top: 7px; color: var(--muted); font-size: 11px; }
+      .table-footer { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+      .pagination { display: flex; align-items: center; gap: 8px; }
+      .pagination button { min-height: 28px; padding: 3px 8px; font-size: 11px; }
 
       .organize-panel { display: flex; min-height: 0; flex-direction: column; padding: 0; overflow: hidden; }
       .organize-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 13px 14px 10px; border-bottom: 1px solid var(--line); }
@@ -116,7 +119,7 @@
 
       .result-panel { position: fixed; inset: 50% auto auto 50%; z-index: 20; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 18px; overflow: auto; box-shadow: var(--shadow); transform: translate(-50%, -50%); }
       .result-panel[hidden] { display: none; }
-      .outcome-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 13px 0; }
+      .outcome-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 13px 0; }
       .outcome-stat { padding: 9px; border-radius: 7px; background: var(--surface-soft); }
       .outcome-stat strong { display: block; font-size: 19px; }
       .failure-list { margin: 0; padding-left: 18px; color: var(--danger); }
@@ -188,7 +191,7 @@
       <section class="folder-bar" aria-label="当前目录">
         <div class="folder-info"><div class="folder-label">当前扫描目录</div><div class="folder-path" id="folderPath" title="">尚未选择素材文件夹</div></div>
         <div class="folder-actions"><button class="text-button" id="cancelTask" type="button" hidden>取消任务</button><button class="button-secondary" id="rescanFolder" type="button">重新识别</button><button class="button-secondary" id="changeFolder" type="button">更换目录</button></div>
-        <div class="task-progress" id="taskProgress" aria-hidden="true" hidden><span></span></div>
+        <div class="task-progress" id="taskProgress" role="progressbar" aria-label="当前任务进度" aria-valuemin="0" hidden><span id="taskProgressValue"></span></div>
       </section>
 
       <section class="summary-grid" aria-label="识别概览与筛选">
@@ -203,8 +206,8 @@
       <main class="workspace">
         <section class="surface results-surface" aria-labelledby="resultsTitle">
           <div class="result-head"><div><h2 id="resultsTitle">识别结果</h2><p class="section-copy" id="resultsCopy">选择素材文件夹后，识别结果会显示在这里。</p></div><div class="result-actions"><input class="search" id="searchInput" type="search" aria-label="搜索识别结果" placeholder="搜索文件名或路径（Ctrl+F）" /><button class="button-secondary organizer-toggle" id="toggleOrganizer" type="button" aria-expanded="false" aria-controls="organizePanel">整理设置</button></div></div>
-          <div class="table-wrap"><table><thead><tr><th>状态</th><th>文件名</th><th>色彩模式</th><th>所在文件夹</th><th>识别依据</th></tr></thead><tbody id="resultBody"></tbody></table></div>
-          <div class="table-footer" id="tableCount">尚未扫描文件夹</div>
+          <div class="table-wrap" id="resultTableWrap"><table><thead><tr><th>状态</th><th>文件名</th><th>色彩模式</th><th>所在文件夹</th><th>识别依据</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+          <div class="table-footer"><span id="tableCount" role="status" aria-live="polite">尚未扫描文件夹</span><nav class="pagination" aria-label="结果分页"><button class="button-secondary" id="previousPage" type="button" disabled>上一页</button><span id="pageNumber">1 / 1</span><button class="button-secondary" id="nextPage" type="button" disabled>下一页</button></nav></div>
         </section>
 
         <aside class="surface organize-panel" id="organizePanel" aria-labelledby="organizeTitle">
@@ -231,7 +234,7 @@
 
       <section class="surface result-panel" id="outcomePanel" hidden role="dialog" aria-modal="true" aria-labelledby="outcomeTitle">
         <div class="section-head"><div><h2 id="outcomeTitle">执行结果</h2><p class="section-copy" id="outcomeCopy"></p></div><button class="icon-button" id="closeOutcome" type="button" aria-label="关闭执行结果">×</button></div>
-        <div class="outcome-summary"><div class="outcome-stat"><span class="section-kicker">成功</span><strong id="successCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">跳过</span><strong id="skippedCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">失败</span><strong id="failedCount">0</strong></div></div>
+        <div class="outcome-summary"><div class="outcome-stat"><span class="section-kicker">成功</span><strong id="successCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">跳过</span><strong id="skippedCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">失败</span><strong id="failedCount">0</strong></div><div class="outcome-stat"><span class="section-kicker">未执行</span><strong id="pendingCount">0</strong></div></div>
         <ul class="failure-list" id="failureList"></ul>
       </section>
     </div>

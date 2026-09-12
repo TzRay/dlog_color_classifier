@@ -216,13 +216,20 @@ def main(argv: list[str] | None = None) -> int:
     """启动 DJI Color Desk Web 工作台。"""
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    arguments = argv if argv is not None else sys.argv[1:]
+    if arguments and arguments[0] == "--self-test":
+        # 发布流水线调用该入口，不显示窗口且只操作自动清理的临时样例。
+        if len(arguments) != 2:
+            return 2
+        from dji_color_classifier.self_check import run_self_check
+
+        return run_self_check(Path(arguments[1]), _find_html_path())
     try:
         import webview
     except ImportError:
         print("未安装 pywebview，Web 工作台需要先安装：python -m pip install 'dlog-color-classifier[web]'", file=sys.stderr)
         return 2
 
-    arguments = argv if argv is not None else sys.argv[1:]
     debug = "--debug" in arguments
     html_path = _find_html_path()
     if not html_path.is_file():

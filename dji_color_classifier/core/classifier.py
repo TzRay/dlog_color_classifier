@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from dji_color_classifier.core.models import ClassificationEvidence, ColorMode, ScanResult
-from dji_color_classifier.core.mp4_reader import Mp4ReaderError, read_dji_color_gamma_label, read_first_djmd_packet
-from dji_color_classifier.core.proto_reader import parse_proto, value_at_path
+from dji_color_classifier.core.mp4_reader import Mp4ReaderError, read_dji_metadata
+from dji_color_classifier.core.proto_reader import ProtoReaderError, parse_proto, value_at_path
 
 
 METADATA_LABEL_MODES = {
@@ -22,12 +22,19 @@ def classify_djmd_packet(
 ) -> tuple[ColorMode, ClassificationEvidence]:
     """根据 ``djmd`` 第一包及可选的 QuickTime 标签判定，保留旧接口兼容性。"""
 
-    color_gamma_sxs, record_mode = _read_djmd_values(packet)
-    return _classify_evidence(
+    warnings: list[str] = []
+    try:
+        color_gamma_sxs, record_mode = _read_djmd_values(packet)
+    except ProtoReaderError as exc:
+        color_gamma_sxs, record_mode = None, None
+        warnings.append(f"djmd protobuf 解析失败：{exc}")
+    mode, evidence = _classify_evidence(
         color_gamma_sxs=color_gamma_sxs,
         record_mode=record_mode,
         metadata_label=metadata_label,
+        warnings=warnings,
     )
+    return (ColorMode.ERROR if warnings and mode is ColorMode.UNKNOWN else mode), evidence
 
 
 def classify_file(video_path: Path) -> ScanResult:
@@ -38,65 +45,53 @@ def classify_file(video_path: Path) -> ScanResult:
     """
 
     warnings: list[str] = []
-    metadata_label: str | None = None
-    packet: bytes | None = None
-    fatal_errors: list[str] = []
-
     try:
-        metadata_label = read_dji_color_gamma_label(video_path)
-    except Mp4ReaderError as exc:
-        message = str(exc)
-        warnings.append(f"QuickTime 元数据读取失败：{message}")
-        if "未找到 moov box" in message:
-            fatal_errors.append(message)
-    except OSError as exc:
-        fatal_errors.append(f"无法读取文件：{exc}")
-
-    try:
-        packet = read_first_djmd_packet(video_path)
-    except Mp4ReaderError as exc:
-        message = str(exc)
-        # 缺少 djmd 轨是合法情况；仍可能通过 QuickTime 标签分类。
-        if "未找到 DJI djmd 数据轨" not in message:
-            warnings.append(f"djmd 元数据读取失败：{message}")
-            if "未找到 moov box" in message:
-                fatal_errors.append(message)
-    except OSError as exc:
-        fatal_errors.append(f"无法读取文件：{exc}")
-
-    if metadata_label is None and packet is None and (fatal_errors or warnings):
+        metadata = read_dji_metadata(video_path)
+    except (Mp4ReaderError, OSError) as exc:
+        message = f"无法读取文件元数据：{exc}"
         evidence = ClassificationEvidence(
             color_gamma_sxs=None,
             record_mode=None,
-            detail="；".join(warnings),
-            warnings=tuple(warnings),
+            detail=message,
+            warnings=(message,),
         )
         return ScanResult(
             path=video_path,
             mode=ColorMode.ERROR,
             evidence=evidence,
             size=_safe_size(video_path),
-            error="；".join(dict.fromkeys(fatal_errors or warnings)),
+            error=message,
         )
 
+    warnings.extend(metadata.warnings)
     color_gamma_sxs: int | None = None
     record_mode: int | None = None
-    if packet is not None:
-        color_gamma_sxs, record_mode = _read_djmd_values(packet)
+    packet_valid = metadata.packet is not None
+    if metadata.packet is not None:
+        try:
+            color_gamma_sxs, record_mode = _read_djmd_values(metadata.packet)
+        except ProtoReaderError as exc:
+            packet_valid = False
+            warnings.append(f"djmd protobuf 解析失败：{exc}")
 
     mode, evidence = _classify_evidence(
         color_gamma_sxs=color_gamma_sxs,
         record_mode=record_mode,
-        metadata_label=metadata_label,
+        metadata_label=metadata.metadata_label,
         warnings=warnings,
     )
-    return ScanResult(path=video_path, mode=mode, evidence=evidence, size=_safe_size(video_path))
+    # 已知 mdta 标签仍可独立分类；没有可用证据时把损坏保留为单文件错误。
+    error = None
+    if mode is ColorMode.UNKNOWN and not packet_valid and warnings:
+        mode = ColorMode.ERROR
+        error = "；".join(warnings)
+    return ScanResult(path=video_path, mode=mode, evidence=evidence, size=metadata.size, error=error)
 
 
 def _read_djmd_values(packet: bytes) -> tuple[int | None, int | None]:
     """从未知 schema 的 DJI protobuf 中读取当前已验证的两个字段。"""
 
-    fields = parse_proto(packet)
+    fields = parse_proto(packet, recursive=False)
     color_gamma_sxs = value_at_path(fields, [(2, 0), (2, 0), (3, 0)], 1)
     record_mode = value_at_path(fields, [(2, 0), (3, 0)], 5)
     return color_gamma_sxs, record_mode

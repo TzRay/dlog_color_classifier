@@ -38,23 +38,14 @@ def test_runtime_script_uses_direct_organize_api_and_drop_bridge() -> None:
         assert removed not in script
 
 
-def test_task_terminal_refreshes_controls_after_state_callback() -> None:
-    """扫描终态必须先写入 scanId，再解除“执行整理”的禁用状态。"""
+def test_web_page_exposes_progress_and_pagination_semantics() -> None:
+    """保留页面结构契约；任务状态与分页行为由 web_runtime.test.cjs 实际运行验证。"""
 
-    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
-    terminal = script.split('if (task.state === "failed")', maxsplit=1)[1].split("async function startScan", maxsplit=1)[0]
-    assert terminal.index("onTerminal(") < terminal.index("refreshControls()")
-
-
-def test_runtime_script_blocks_duplicate_scan_and_resets_old_filters() -> None:
-    """重复拖拽不得并发扫描，切换目录也不能残留旧搜索条件。"""
-
-    script = (ROOT / "prototype" / "app.js").read_text(encoding="utf-8")
-    start_scan = script.split("async function startScan", maxsplit=1)[1].split("async function chooseFolder", maxsplit=1)[0]
-    assert "if (isBusy()) return" in start_scan
-    assert 'state.filter = "all"' in start_scan
-    assert '$("#searchInput").value = ""' in start_scan
-    assert '$("#folderPath").textContent = selectedRoot' in start_scan
+    html = (ROOT / "prototype" / "index.html").read_text(encoding="utf-8")
+    assert 'id="taskProgress" role="progressbar" aria-label="当前任务进度"' in html
+    assert 'id="tableCount" role="status" aria-live="polite"' in html
+    assert '<nav class="pagination" aria-label="结果分页">' in html
+    assert 'id="pendingCount"' in html
 
 
 def test_runtime_script_only_references_existing_ids() -> None:

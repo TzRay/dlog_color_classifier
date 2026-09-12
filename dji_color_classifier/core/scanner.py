@@ -2,29 +2,42 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 from collections.abc import Callable
 from threading import Event
 from typing import Iterable
 
 from dji_color_classifier.core.classifier import classify_file
-from dji_color_classifier.core.models import ScanResult
+from dji_color_classifier.core.models import ClassificationEvidence, ColorMode, ScanResult
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
+LOGGER = logging.getLogger(__name__)
 
 
-def iter_video_files(directory: Path, *, recursive: bool = False) -> list[Path]:
-    """枚举目录中的视频文件，后缀大小写不敏感。"""
+def iter_video_files(
+    directory: Path, *, recursive: bool = False, cancel_event: Event | None = None
+) -> list[Path]:
+    """可取消地枚举视频，复用目录项属性并避免递归进入目录链接。"""
 
-    pattern = "**/*" if recursive else "*"
+    pending = [directory]
     videos: dict[Path, Path] = {}
-    for path in directory.glob(pattern):
-        if not path.is_file():
-            continue
-        if path.suffix.lower() not in VIDEO_SUFFIXES:
-            continue
-        videos[path.resolve()] = path
+    while pending:
+        if cancel_event is not None and cancel_event.is_set():
+            break
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                path = Path(entry.path)
+                if entry.is_dir(follow_symlinks=False):
+                    if recursive and not path.is_symlink():
+                        pending.append(path)
+                elif path.suffix.lower() in VIDEO_SUFFIXES and entry.is_file():
+                    videos[path.resolve()] = path
     return sorted(videos.values(), key=lambda item: str(item).lower())
 
 
@@ -42,13 +55,26 @@ def scan_directory(
     避免用户在批量识别期间关闭窗口后仍继续读取后续大文件。
     """
 
-    files = iter_video_files(directory, recursive=recursive)
+    files = iter_video_files(directory, recursive=recursive, cancel_event=cancel_event)
     results: list[ScanResult] = []
     total = len(files)
+    if on_progress is not None:
+        on_progress(0, total, directory)
     for completed, path in enumerate(files, start=1):
         if cancel_event is not None and cancel_event.is_set():
             break
-        results.append(classify_file(path))
+        try:
+            result = classify_file(path)
+        except Exception as exc:
+            # 单个文件或新解析规则的异常不能吞掉本批次已经完成的识别结果。
+            LOGGER.exception("识别文件失败，继续处理后续素材：%s", path)
+            result = ScanResult(
+                path=path,
+                mode=ColorMode.ERROR,
+                evidence=ClassificationEvidence(None, None, detail="单文件识别异常"),
+                error=f"识别失败：{type(exc).__name__}: {exc}",
+            )
+        results.append(result)
         if on_progress is not None:
             on_progress(completed, total, path)
     return results
